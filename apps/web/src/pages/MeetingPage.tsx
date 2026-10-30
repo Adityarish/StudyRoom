@@ -6,7 +6,7 @@ import { ConnectionQuality, LocalParticipant, Participant, RemoteTrackPublicatio
 import type { AvatarId, LayoutMode, QualityMode, RealtimeServerMessage, RoomMember, WhatsAppContact } from '@studyroom/shared';
 import { Avatar } from '../components/Avatar';
 import { WhatsAppInviteDialog } from '../components/WhatsAppInviteDialog';
-import { API_URL, api } from '../lib/api';
+import { API_URL, api, roomInvitationUrl } from '../lib/api';
 import { copyText } from '../lib/clipboard';
 import { guestSession } from '../lib/guest';
 import { useRealtime } from '../hooks/useRealtime';
@@ -82,7 +82,7 @@ export function MeetingPage() {
   }, [participants, layout, pinned, activeSpeaker, room]);
   const sendChat = (e: React.FormEvent) => { e.preventDefault(); const text = chatText.trim(); if (!text || !joined?.room.chatEnabled) return; if (!realtime.send({ type: 'chat', message: text })) { setError('Chat is reconnecting. Your message was not sent; try again in a moment.'); return; } setChatText(''); };
   const notifyMember = async (member: RoomMember) => { if (!joined || notifyingMember) return; setNotifyingMember(member.id); setMemberNotice(''); try { const result = await api.notifyMember(roomId, member.id, joined.sessionId, joined.sessionToken); setMemberNotice(result.message); await refreshMembers(); } catch (cause) { setMemberNotice(cause instanceof Error ? cause.message : 'The reminder could not be sent.'); } finally { setNotifyingMember(''); } };
-  const copyInvite = async () => { try { await copyText(new URL(`/room/${roomId}`, location.origin).toString()); setInviteCopied(true); window.setTimeout(() => setInviteCopied(false), 2000); } catch { setError('The browser blocked automatic copying. Copy the room address from the address bar.'); } };
+  const copyInvite = async () => { try { await copyText(roomInvitationUrl(roomId)); setInviteCopied(true); window.setTimeout(() => setInviteCopied(false), 2000); } catch { setError('The browser blocked automatic copying. Copy the room address from the address bar.'); } };
   const whatsappContacts: WhatsAppContact[] = members.filter(member => member.canInviteOnWhatsApp).map(member => ({ id: member.id, displayName: member.displayName, maskedNumber: 'Indian WhatsApp · opted in' }));
   if (!joined) return null;
   if (connection === 'connecting') return <main className="meeting-loading"><div className="connect-rings"><span/><span/><Video/></div><h1>Entering {joined.room.name}</h1><p>Securing your connection and preparing media…</p></main>;

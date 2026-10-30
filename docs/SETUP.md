@@ -18,6 +18,7 @@ Copy `.env.example` to `.env.local` (or `.env`). Keep it private. The API loads 
 | Variable | Purpose | Local value/source |
 | --- | --- | --- |
 | `VITE_API_URL` | API origin compiled into the browser | `http://localhost:4000` |
+| `VITE_PUBLIC_APP_URL` | canonical origin for copied invitations | `http://localhost:5173` locally; production Vercel domain when deployed |
 | `NODE_ENV` | cookie/security behavior | `development` |
 | `PORT` | Express port | `4000` |
 | `WEB_ORIGIN` | exact allowed browser origin | `http://localhost:5173` |
