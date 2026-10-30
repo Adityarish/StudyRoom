@@ -2,10 +2,12 @@ import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { ArrowRight, BatteryCharging, BookOpen, Check, Clock3, Headphones, LockKeyhole, MessageCircle, MonitorUp, ShieldCheck, Sparkles, UsersRound, Video, Wifi, Zap } from 'lucide-react';
 import { Logo } from '../components/Logo';
+import { useAuth } from '../context/AuthContext';
 
 export function LandingPage() {
   const [code, setCode] = useState('');
   const navigate = useNavigate();
+  const { user, signOut } = useAuth();
   const join = () => {
     const raw = code.trim();
     if (!raw) return;
@@ -13,7 +15,7 @@ export function LandingPage() {
     navigate(`/room/${encodeURIComponent(match?.[1] ?? raw)}`);
   };
   return <div className="landing">
-    <nav className="landing-nav"><Logo /><div className="nav-links"><a href="#features">Features</a><a href="#how">How it works</a><a href="#privacy">Privacy</a><a className="button button-ghost nav-admin" href="/admin/login"><span>Host a room</span><ArrowRight size={16}/></a></div></nav>
+    <nav className="landing-nav"><Logo /><div className="nav-links"><a href="#features">Features</a><a href="#how">How it works</a><a href="#privacy">Privacy</a>{user ? <div className="nav-user-pill"><span className="nav-user-email">{user.email}</span><button type="button" className="nav-signout" onClick={() => void signOut()}>Sign out</button></div> : <a href="/login" className="nav-login-link">Sign in</a>}<a className="button button-ghost nav-admin" href="/admin/login"><span>Host a room</span><ArrowRight size={16}/></a></div></nav>
     <main>
       <section className="hero">
         <div className="hero-copy"><div className="eyebrow"><span className="eyebrow-pulse"/><Sparkles size={15}/> Built for study groups, not boardrooms</div>

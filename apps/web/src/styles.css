@@ -490,3 +490,31 @@ html,body,#root{width:100%;max-width:100%;min-height:100%;overflow-x:clip}
   .admin-contact-list article{grid-template-columns:auto minmax(0,1fr);padding:14px}
   .contact-details{grid-column:2}
 }
+
+/* User authentication tabs and fields */
+.auth-tabs{display:flex;gap:6px;background:#f0f4f2;padding:4px;border-radius:12px;margin:18px 0 16px;border:1px solid #e1e8e4}
+.auth-tab{flex:1;padding:8px 12px;border:0;border-radius:8px;background:transparent;color:#556660;font-weight:600;font-size:13px;cursor:pointer;transition:all .18s ease}
+.auth-tab.active{background:#fff;color:var(--ink);font-weight:700;box-shadow:0 2px 8px rgba(0,0,0,.08)}
+.input-with-icon{position:relative;display:flex;align-items:center}
+.input-with-icon svg{position:absolute;left:14px;color:#72847d;pointer-events:none}
+.input-with-icon input{padding-left:40px!important;width:100%}
+.auth-switch-prompt{text-align:center;margin-top:14px;font-size:13px;color:#586961}
+.auth-switch-prompt button{background:none;border:none;color:var(--green);font-weight:700;padding:0 4px;text-decoration:underline;cursor:pointer}
+.privacy-note{display:block;text-align:center;margin-top:14px;font-size:11px;color:#72847d;line-height:1.4}
+
+/* Prejoin authenticated user badge */
+.auth-account-badge{background:#f4f8f6;border:1px solid #d4e5de;border-radius:14px;padding:14px 16px;display:flex;flex-direction:column;gap:8px}
+.auth-badge-info{display:flex;flex-direction:column;gap:4px}
+.auth-badge-top{display:flex;justify-content:space-between;align-items:center}
+.auth-badge-title{display:inline-flex;align-items:center;gap:5px;font-size:11px;font-weight:700;color:var(--green);text-transform:uppercase;letter-spacing:.5px}
+.auth-badge-email{font-size:14px;font-weight:700;color:var(--ink)}
+.auth-switch-link{background:transparent;border:0;color:#5f7069;font-size:11px;font-weight:600;text-decoration:underline;cursor:pointer;padding:2px 4px}
+.auth-switch-link:hover{color:var(--green)}
+
+/* Landing navigation authenticated user badge */
+.nav-user-pill{display:inline-flex;align-items:center;gap:8px;background:#eff6f3;border:1px solid #d7e6df;border-radius:999px;padding:5px 12px;font-size:12px}
+.nav-user-email{font-weight:600;color:var(--ink);max-width:150px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.nav-signout{background:transparent;border:0;color:#70827b;font-size:11px;font-weight:600;cursor:pointer;padding:0}
+.nav-signout:hover{color:#c0392b}
+.nav-login-link{font-weight:600;color:var(--green)}
+.nav-login-link:hover{text-decoration:underline}
