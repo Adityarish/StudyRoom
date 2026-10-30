@@ -49,7 +49,13 @@ export function publicRoutes(db: Database, livekit: LiveKitService, mailer: Noti
       FROM guest_sessions session
       JOIN guest_profiles profile ON profile.id=session.profile_id
       WHERE session.room_id=$1 AND session.approval_status='approved'
-      GROUP BY session.profile_id,profile.email,profile.whatsapp_number,profile.whatsapp_consent
+      GROUP BY (
+        CASE
+          WHEN session.left_at IS NULL AND session.last_seen_at > now() - interval '5 minutes'
+          THEN session.id
+          ELSE session.profile_id
+        END
+      ), session.profile_id, profile.email, profile.whatsapp_number, profile.whatsapp_consent
     )
     SELECT latest.*,notification.sent_at AS last_notified_at
     FROM latest
@@ -67,7 +73,8 @@ export function publicRoutes(db: Database, livekit: LiveKitService, mailer: Noti
       const canReceiveReminder = mailer.configured && Boolean(member.email) && !isLive && member.profile_id !== guest.profileId;
       const coolingDown = Boolean(canReceiveReminder && lastNotifiedAt && now - new Date(lastNotifiedAt).getTime() < 600_000);
       const emailReminderStatus = canReceiveReminder ? (coolingDown ? 'cooldown' : 'available') : 'unavailable';
-      return { id: member.id, displayName: member.display_name, avatarId: member.avatar_id, identities, live: isLive, isSelf: member.profile_id === guest.profileId, lastNotifiedAt, canNotify: emailReminderStatus === 'available', emailReminderStatus, canInviteOnWhatsApp: Boolean(member.whatsapp_consent && member.whatsapp_number) && member.profile_id !== guest.profileId };
+      const isSelf = member.id === guest.id || (member.profile_id === guest.profileId && !isLive);
+      return { id: member.id, displayName: member.display_name, avatarId: member.avatar_id, identities, live: isLive, isSelf, lastNotifiedAt, canNotify: emailReminderStatus === 'available', emailReminderStatus, canInviteOnWhatsApp: Boolean(member.whatsapp_consent && member.whatsapp_number) && member.profile_id !== guest.profileId };
     }) });
   }));
   router.post('/rooms/:roomId/whatsapp-invitations', guestAuth(db), asyncHandler(async (req, res) => {

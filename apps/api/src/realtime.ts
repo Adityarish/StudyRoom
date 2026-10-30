@@ -34,7 +34,7 @@ export function createRealtimeServer(db: Database, config: Config) {
     } catch { send(socket, { type: 'error', code: 'BAD_MESSAGE', message: 'That realtime message could not be read.' }); } });
     socket.on('close', () => { clearTimeout(authTimer); const client = state.get(socket); if (client?.roomId) broadcastPresence(wss, client.roomId); });
   });
-  return { wss, handleUpgrade(request: IncomingMessage, socket: Duplex, head: Buffer) { const origin = request.headers.origin; const pathname = new URL(request.url ?? '/', 'http://localhost').pathname; if (pathname !== '/ws' || origin !== config.WEB_ORIGIN) { socket.write('HTTP/1.1 403 Forbidden\r\n\r\n'); socket.destroy(); return; } wss.handleUpgrade(request, socket, head, ws => wss.emit('connection', ws, request)); } };
+  return { wss, handleUpgrade(request: IncomingMessage, socket: Duplex, head: Buffer) { const origin = request.headers.origin; const pathname = new URL(request.url ?? '/', 'http://localhost').pathname; if (pathname !== '/ws' || (origin && origin.replace(/\/$/, '') !== config.WEB_ORIGIN.replace(/\/$/, ''))) { socket.write('HTTP/1.1 403 Forbidden\r\n\r\n'); socket.destroy(); return; } wss.handleUpgrade(request, socket, head, ws => wss.emit('connection', ws, request)); } };
 }
 function send(socket: WebSocket, value: RealtimeServerMessage) { if (socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify(value)); }
 function broadcast(wss: WebSocketServer, roomId: string, value: RealtimeServerMessage) { for (const socket of wss.clients) { const client = state.get(socket); if (client?.authenticated && client.roomId === roomId) send(socket, value); } }

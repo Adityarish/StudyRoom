@@ -34,15 +34,26 @@ export async function resolveGuestProfile(client: PoolClient, input: GuestProfil
   let matches = contactMatches.rows;
   let matchedContactlessClient = false;
   if (matches.length === 0) {
-    const clientMatch = await client.query<{ id: string; email: string | null; whatsapp_number: string | null }>(`SELECT profile.id,profile.email,profile.whatsapp_number
+    const clientMatch = await client.query<{ id: string; display_name: string; email: string | null; whatsapp_number: string | null }>(`SELECT profile.id,profile.display_name,profile.email,profile.whatsapp_number
       FROM guest_profiles profile
       JOIN guest_profile_identifiers identifier ON identifier.profile_id=profile.id
       WHERE identifier.kind='client' AND identifier.value=$1
+      ORDER BY profile.last_joined_at DESC
       LIMIT 1`, [input.clientId]);
     const existing = clientMatch.rows[0];
-    if (existing && (!hasContactIdentifier || (!existing.email && !existing.whatsapp_number))) {
+    if (existing && (!hasContactIdentifier || (!existing.email && !existing.whatsapp_number)) && existing.display_name.trim().toLowerCase() === input.displayName.trim().toLowerCase()) {
       matches = [{ id: existing.id }];
       matchedContactlessClient = hasContactIdentifier;
+    } else if (!hasContactIdentifier) {
+      const nameMatch = await client.query<{ id: string }>(`SELECT profile.id
+        FROM guest_profiles profile
+        JOIN guest_sessions session ON session.profile_id=profile.id
+        WHERE session.client_id=$1 AND lower(trim(profile.display_name))=lower(trim($2))
+        ORDER BY session.joined_at DESC
+        LIMIT 1`, [input.clientId, input.displayName]);
+      if (nameMatch.rows[0]) {
+        matches = [{ id: nameMatch.rows[0].id }];
+      }
     }
   }
 
