@@ -74,25 +74,21 @@ export function adminRoutes(db: Database, config: Config, livekit: LiveKitServic
   router.get('/rooms/:id/participants', asyncHandler(async (req, res) => { const room = await db.query('SELECT livekit_room_name FROM study_rooms WHERE id=$1', [req.params.id]); if (!room.rows[0]) throw new HttpError(404, 'ROOM_NOT_FOUND', 'Room not found.'); const live = new Set(await livekit.activeIdentities(room.rows[0].livekit_room_name)); const result = await db.query(`SELECT DISTINCT ON (profile_id) id,profile_id,guest_identity,display_name,avatar_id,joined_at,left_at,approval_status,last_seen_at FROM guest_sessions WHERE room_id=$1 AND ((approval_status='pending' AND left_at IS NULL) OR (approval_status='approved' AND left_at IS NULL AND last_seen_at>now()-interval '5 minutes') OR guest_identity=ANY($2::text[])) ORDER BY profile_id,joined_at DESC LIMIT 100`, [req.params.id, [...live]]); res.json({ participants: result.rows.map(p => ({ id:p.id, identity:p.guest_identity, displayName:p.display_name, avatarId:p.avatar_id, joinedAt:new Date(p.joined_at).toISOString(), approvalStatus:p.approval_status, live: live.has(p.guest_identity) || (p.approval_status === 'approved' && !p.left_at && new Date(p.last_seen_at).getTime() > Date.now() - 5*60_000) })) }); }));
   router.delete('/rooms/:id/participants/:identity', requireCsrf, asyncHandler(async (req, res) => { const room = await db.query('SELECT livekit_room_name FROM study_rooms WHERE id=$1', [req.params.id]); if (!room.rows[0]) throw new HttpError(404, 'ROOM_NOT_FOUND', 'Room not found.'); const identity = String(req.params.identity); await livekit.remove(room.rows[0].livekit_room_name, identity); await db.query('UPDATE guest_sessions SET left_at=COALESCE(left_at,now()) WHERE room_id=$1 AND guest_identity=$2', [req.params.id, identity]); res.status(204).end(); }));
   router.post('/rooms/:id/waiting/:sessionId', requireCsrf, asyncHandler(async (req, res) => {
-    const approved = Boolean(req.body?.approved); const replacedIdentities: string[] = []; let livekitRoomName = '';
+    const approved = Boolean(req.body?.approved);
     if (approved) {
       const client = await db.connect();
       try {
         await client.query('BEGIN');
-        const room = await client.query('SELECT max_participants,livekit_room_name FROM study_rooms WHERE id=$1 FOR UPDATE', [req.params.id]);
+        const room = await client.query('SELECT max_participants FROM study_rooms WHERE id=$1 FOR UPDATE', [req.params.id]);
         if (!room.rows[0]) throw new HttpError(404, 'ROOM_NOT_FOUND', 'Room not found.');
-        livekitRoomName = String(room.rows[0].livekit_room_name);
-        const pending = await client.query(`SELECT profile_id FROM guest_sessions WHERE id=$1 AND room_id=$2 AND approval_status='pending' AND left_at IS NULL FOR UPDATE`, [req.params.sessionId, req.params.id]);
+        const pending = await client.query(`SELECT id FROM guest_sessions WHERE id=$1 AND room_id=$2 AND approval_status='pending' AND left_at IS NULL FOR UPDATE`, [req.params.sessionId, req.params.id]);
         if (!pending.rows[0]) throw new HttpError(404, 'WAITING_REQUEST_NOT_FOUND', 'Waiting request not found.');
-        const replaced = await client.query(`UPDATE guest_sessions SET left_at=now(),last_seen_at=now() WHERE room_id=$1 AND profile_id=$2 AND id<>$3 AND left_at IS NULL AND approval_status='approved' RETURNING guest_identity`, [req.params.id, pending.rows[0].profile_id, req.params.sessionId]);
-        replacedIdentities.push(...replaced.rows.map(row => String(row.guest_identity)));
         const active = await client.query(`SELECT count(*)::int AS total FROM guest_sessions WHERE room_id=$1 AND left_at IS NULL AND approval_status='approved' AND last_seen_at>now()-interval '5 minutes'`, [req.params.id]);
         if (active.rows[0].total >= room.rows[0].max_participants) throw new HttpError(409, 'ROOM_FULL', 'The room is at capacity.');
         await client.query(`UPDATE guest_sessions SET approval_status='approved',last_seen_at=now(),left_at=NULL WHERE id=$1 AND room_id=$2`, [req.params.sessionId, req.params.id]);
         await client.query('COMMIT');
       } catch (error) { await client.query('ROLLBACK').catch(() => {}); throw error; }
       finally { client.release(); }
-      await Promise.all(replacedIdentities.map(identity => livekit.remove(livekitRoomName, identity).catch(() => {})));
     } else {
       const result = await db.query(`UPDATE guest_sessions SET approval_status='declined',last_seen_at=now(),left_at=now() WHERE id=$1 AND room_id=$2 AND approval_status='pending' RETURNING id`, [req.params.sessionId, req.params.id]);
       if (!result.rowCount) throw new HttpError(404, 'WAITING_REQUEST_NOT_FOUND', 'Waiting request not found.');

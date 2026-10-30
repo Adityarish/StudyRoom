@@ -21,20 +21,14 @@ export function publicRoutes(db: Database, livekit: LiveKitService, mailer: Noti
   router.get('/rooms/:roomId', asyncHandler(async (req, res) => { const result = await db.query(`${roomSelect} WHERE r.public_room_id=$1`, [req.params.roomId]); const row = result.rows[0]; if (!row) throw new HttpError(404, 'ROOM_NOT_FOUND', 'This invitation does not match a study room.'); if (row.status !== 'active') throw new HttpError(410, 'ROOM_CLOSED', 'This study room has been closed.'); if (row.expires_at && new Date(row.expires_at) <= new Date()) throw new HttpError(410, 'ROOM_EXPIRED', 'This study room has expired.'); res.json({ room: stripAdmin(mapRoom(row)) }); }));
   router.post('/rooms/:roomId/join', asyncHandler(async (req, res) => {
     const input = guestJoinSchema.parse(req.body); const client = await db.connect();
-    let replacedIdentities: string[] = [];
     try { await client.query('BEGIN'); const result = await client.query(`${roomSelect} WHERE r.public_room_id=$1 FOR UPDATE OF r`, [req.params.roomId]); const room = result.rows[0]; if (!room) throw new HttpError(404, 'ROOM_NOT_FOUND', 'This invitation does not match a study room.');
       if (room.room_password_hash) { if (!input.roomPassword || !(await verifyPassword(input.roomPassword, room.room_password_hash))) throw new HttpError(403, 'ROOM_PASSWORD_INVALID', 'The room password is incorrect.'); }
       const contact = normalizeGuestContact(input);
       const profileId = await resolveGuestProfile(client, { clientId: input.clientId, displayName: input.displayName, avatarId: input.avatarId, presentation: input.presentation, ...contact });
-      const replaced = await client.query(`UPDATE guest_sessions SET left_at=now(),last_seen_at=now() WHERE room_id=$1 AND profile_id=$2 AND left_at IS NULL AND ($3::boolean=false OR approval_status='pending') RETURNING guest_identity,approval_status,last_seen_at`, [room.id, profileId, room.waiting_room_enabled]);
-      replacedIdentities = replaced.rows.map(row => String(row.guest_identity));
-      const replacedActive = replaced.rows.filter(row => row.approval_status === 'approved' && new Date(row.last_seen_at) > new Date(Date.now() - 300_000)).length;
-      const currentProfile = room.waiting_room_enabled ? await client.query(`SELECT 1 FROM guest_sessions WHERE room_id=$1 AND profile_id=$2 AND left_at IS NULL AND approval_status='approved' AND last_seen_at>now()-interval '5 minutes' LIMIT 1`, [room.id, profileId]) : null;
-      assertRoomJoinable({ ...room, active_participants: Math.max(0, Number(room.active_participants) - replacedActive) }, new Date(), Boolean(currentProfile?.rowCount));
+      assertRoomJoinable(room, new Date());
       const identity = `guest_${randomToken(18)}`; const sessionToken = randomToken(); const waitingToken = randomToken(); const approval = room.waiting_room_enabled ? 'pending' : 'approved';
       const session = await client.query(`INSERT INTO guest_sessions(room_id,profile_id,guest_identity,display_name,avatar_id,presentation,client_id,email,whatsapp_number,whatsapp_consent,session_token_hash,waiting_token_hash,approval_status) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) RETURNING id`, [room.id, profileId, identity, input.displayName, input.avatarId, input.presentation ?? null, input.clientId, contact.email, contact.whatsappNumber, contact.whatsappConsent, tokenHash(sessionToken), tokenHash(waitingToken), approval]);
       await client.query('COMMIT');
-      await Promise.all(replacedIdentities.map(previousIdentity => livekit.remove(room.livekit_room_name, previousIdentity).catch(() => {})));
       if (approval === 'pending') return res.status(202).json({ status: 'waiting', requestId: session.rows[0].id, requestToken: waitingToken });
       const token = await livekit.guestToken({ roomName: room.livekit_room_name, identity, displayName: input.displayName, avatarId: input.avatarId, screenSharingEnabled: room.screen_sharing_enabled });
       return res.status(201).json({ status: 'joined', livekitUrl: livekit.publicUrl, token, sessionId: session.rows[0].id, sessionToken, identity, room: stripAdmin(mapRoom(room)) });
