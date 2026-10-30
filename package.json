@@ -9,7 +9,7 @@
     "build": "npm run build -w @studyroom/shared && npm run build -w @studyroom/api && npm run build -w @studyroom/web",
     "build:api": "npm run build -w @studyroom/shared && npm run build -w @studyroom/api",
     "build:web": "npm run build -w @studyroom/shared && npm run build -w @studyroom/web",
-    "render:start": "npm run db:migrate && npm run start",
+    "render:start": "npm run db:migrate && if [ -n \"$ADMIN_BOOTSTRAP_USERNAME$ADMIN_BOOTSTRAP_PASSWORD\" ]; then npm run admin:bootstrap; fi && npm run start",
     "typecheck": "npm run build -w @studyroom/shared && npm run typecheck -w @studyroom/api && npm run typecheck -w @studyroom/web",
     "lint": "eslint apps packages --max-warnings=0",
     "test": "npm run test -w @studyroom/api && npm run test -w @studyroom/web",

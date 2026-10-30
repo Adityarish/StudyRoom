@@ -86,6 +86,23 @@ If you use a paid Render web plan, you can move `npm run db:migrate` from `start
 
 ## 6. Create the first administrator
 
+### Free Render service (no Shell access)
+
+In **Render > studyroom-api > Environment**, add these two temporary secret values:
+
+- `ADMIN_BOOTSTRAP_USERNAME=admin`
+- `ADMIN_BOOTSTRAP_PASSWORD` set to a new private password with at least 12 characters
+
+Save the environment and deploy the latest commit. The startup command applies migrations, creates or resets that administrator in the same database used by the API, and then starts the service. In the deployment logs, confirm this message appears:
+
+```text
+Administrator “admin” is ready. The password was not logged.
+```
+
+After confirming that login works, remove both temporary variables from Render and redeploy. The administrator remains in PostgreSQL. Keeping the variables would reset its password to the same value on every service restart.
+
+### Render service with Shell access
+
 Open a private Render Shell for `studyroom-api` and run the bootstrap command with temporary environment variables. Do not commit or paste the password into source files:
 
 ```bash
@@ -94,7 +111,7 @@ ADMIN_BOOTSTRAP_PASSWORD='use-a-long-unique-password' \
 npm run admin:bootstrap
 ```
 
-Remove any temporary dashboard variables after the command finishes. The bootstrap command hashes the password before storage.
+The bootstrap command hashes the password before storage.
 
 ## 7. Optional email reminders
 
