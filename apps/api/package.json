@@ -1,0 +1,46 @@
+{
+  "name": "@studyroom/api",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch src/server.ts",
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "start": "node dist/server.js",
+    "test": "vitest run",
+    "db:migrate": "tsx src/cli/migrate.ts",
+    "admin:bootstrap": "tsx src/cli/bootstrap-admin.ts",
+    "livekit:check": "tsx src/cli/check-livekit.ts",
+    "smtp:check": "tsx src/cli/check-smtp.ts"
+  },
+  "dependencies": {
+    "@livekit/protocol": "^1.52.1",
+    "@studyroom/shared": "1.0.0",
+    "cookie-parser": "^1.4.7",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.7",
+    "express": "^5.0.1",
+    "express-rate-limit": "^7.5.0",
+    "helmet": "^8.0.0",
+    "livekit-server-sdk": "^2.9.4",
+    "nodemailer": "^10.2.1",
+    "pg": "^8.13.1",
+    "ws": "^8.18.0",
+    "zod": "^3.24.2"
+  },
+  "devDependencies": {
+    "@types/cookie-parser": "^1.4.8",
+    "@types/cors": "^2.8.17",
+    "@types/express": "^5.0.0",
+    "@types/node": "^22.10.5",
+    "@types/nodemailer": "^8.0.2",
+    "@types/pg": "^8.11.10",
+    "@types/supertest": "^6.0.2",
+    "@types/ws": "^8.5.13",
+    "supertest": "^7.0.0",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.3",
+    "vitest": "^3.0.5"
+  }
+}
