@@ -1,4 +1,4 @@
-import type { ApiError, JoinResponse, PreparedWhatsAppInvitation, PublicRoom, RoomMember, WaitingResponse, WhatsAppContact } from '@studyroom/shared';
+import type { ApiError, GuestContact, JoinResponse, PreparedWhatsAppInvitation, PublicRoom, RoomMember, WaitingResponse, WhatsAppContact } from '@studyroom/shared';
 
 const configuredBackendUrl = (import.meta.env.VITE_API_URL as string | undefined)?.replace(/\/$/, '');
 
@@ -41,6 +41,7 @@ export const api = {
   adminMe: () => request<{ administrator: { id: string; username: string }; csrfToken: string }>('/api/admin/me'),
   adminRooms: () => request<{ rooms: import('@studyroom/shared').AdminRoom[] }>('/api/admin/rooms'),
   createRoom: (body: unknown) => request<{ room: import('@studyroom/shared').AdminRoom }>('/api/admin/rooms', { method: 'POST', body: JSON.stringify(body) }),
+  guestContacts: () => request<{ contacts: GuestContact[] }>('/api/admin/guest-contacts'),
   whatsappContacts: () => request<{ contacts: WhatsAppContact[] }>('/api/admin/whatsapp-contacts'),
   prepareAdminWhatsAppInvitations: (id: string, targetSessionIds: string[]) => request<{ invitations: PreparedWhatsAppInvitation[] }>(`/api/admin/rooms/${encodeURIComponent(id)}/whatsapp-invitations`, { method: 'POST', body: JSON.stringify({ targetSessionIds }) }),
   markAdminWhatsAppOpened: (invitationId: string) => request(`/api/admin/whatsapp-invitations/${encodeURIComponent(invitationId)}/opened`, { method: 'POST' }),

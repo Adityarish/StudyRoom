@@ -329,3 +329,21 @@ html,body,#root{width:100%;max-width:100%;min-height:100%;overflow-x:clip}
   .control span{display:none}
   .settings-popover{max-height:calc(100dvh - 72px)}
 }
+
+/* One durable contact per guest, with responsive admin details. */
+.admin-contact-list{display:grid}
+.admin-contact-list article{display:grid;grid-template-columns:auto minmax(170px,1fr) minmax(260px,1.3fr);align-items:center;gap:14px;padding:15px 24px;border-bottom:1px solid #edf0ee}
+.admin-contact-list article:last-child{border-bottom:0}
+.contact-identity{min-width:0}
+.contact-identity b,.contact-identity small{display:block}
+.contact-identity b{font-size:13px;color:var(--ink)}
+.contact-identity small{margin-top:4px;color:var(--muted);font-size:10px}
+.contact-details{min-width:0;display:grid;gap:6px}
+.contact-details span{display:flex;align-items:center;gap:7px;min-width:0;color:#586961;font-size:11px;overflow-wrap:anywhere}
+.contact-details svg{width:14px;height:14px;flex:0 0 auto;color:var(--green)}
+[data-admin-theme=dark] .admin-contact-list article{border-color:#283730}
+[data-admin-theme=dark] .contact-details span{color:#b5c5bf}
+@media(max-width:700px){
+  .admin-contact-list article{grid-template-columns:auto minmax(0,1fr);padding:14px}
+  .contact-details{grid-column:2}
+}

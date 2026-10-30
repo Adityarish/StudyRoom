@@ -9,7 +9,7 @@ import { asyncHandler } from '../http/async-handler.js';
 import { HttpError } from '../http/errors.js';
 import { adminAuth, requireCsrf } from '../middleware/admin-auth.js';
 import { hashPassword, randomToken, tokenHash, verifyPassword } from '../security/crypto.js';
-import { maskWhatsAppNumber, prepareWhatsAppInvitations } from '../services/whatsapp-click-to-chat.js';
+import { formatWhatsAppNumber, maskWhatsAppNumber, prepareWhatsAppInvitations } from '../services/whatsapp-click-to-chat.js';
 
 const listSql = `SELECT r.*, (SELECT count(*) FROM guest_sessions g WHERE g.room_id=r.id AND g.left_at IS NULL AND g.approval_status='approved' AND g.last_seen_at>now()-interval '5 minutes')::int active_participants FROM study_rooms r`;
 export function adminRoutes(db: Database, config: Config, livekit: LiveKitService) {
@@ -21,10 +21,25 @@ export function adminRoutes(db: Database, config: Config, livekit: LiveKitServic
   router.get('/me', auth, asyncHandler(async (req: AdminRequest, res) => { const csrfToken = req.cookies?.studyroom_csrf as string | undefined; if (!csrfToken || tokenHash(csrfToken) !== req.administrator!.csrfToken) throw new HttpError(401, 'SESSION_INVALID', 'Your session verification token is missing.'); await db.query('UPDATE admin_sessions SET last_seen_at=now() WHERE id=$1', [req.administrator!.sessionId]); res.json({ administrator: { id: req.administrator!.id, username: req.administrator!.username }, csrfToken }); }));
   router.post('/logout', auth, requireCsrf, asyncHandler(async (req: AdminRequest, res) => { await db.query('UPDATE admin_sessions SET revoked_at=now() WHERE id=$1', [req.administrator!.sessionId]); res.clearCookie('studyroom_admin', cookie); res.clearCookie('studyroom_csrf', { ...cookie, httpOnly: false }); res.status(204).end(); }));
   router.use(auth);
+  router.get('/guest-contacts', asyncHandler(async (_req, res) => {
+    const result = await db.query(`SELECT profile.id,profile.display_name,profile.email,profile.whatsapp_number,
+      profile.created_at,profile.last_joined_at,count(session.id)::int AS join_count
+      FROM guest_profiles profile
+      LEFT JOIN guest_sessions session ON session.profile_id=profile.id
+      GROUP BY profile.id
+      ORDER BY profile.last_joined_at DESC LIMIT 500`);
+    res.json({ contacts: result.rows.map(contact => ({
+      id: String(contact.id), displayName: String(contact.display_name),
+      email: contact.email ? String(contact.email) : null,
+      whatsappNumber: contact.whatsapp_number ? formatWhatsAppNumber(String(contact.whatsapp_number)) : null,
+      joinCount: Number(contact.join_count), createdAt: new Date(contact.created_at).toISOString(),
+      lastJoinedAt: new Date(contact.last_joined_at).toISOString(),
+    })) });
+  }));
   router.get('/whatsapp-contacts', asyncHandler(async (_req, res) => {
-    const result = await db.query(`SELECT DISTINCT ON (whatsapp_number) id,display_name,whatsapp_number
-      FROM guest_sessions WHERE whatsapp_consent=true AND whatsapp_number IS NOT NULL
-      ORDER BY whatsapp_number,joined_at DESC LIMIT 250`);
+    const result = await db.query(`SELECT id,display_name,whatsapp_number FROM guest_profiles
+      WHERE whatsapp_consent=true AND whatsapp_number IS NOT NULL
+      ORDER BY last_joined_at DESC LIMIT 250`);
     res.json({ contacts: result.rows.map(contact => ({ id: String(contact.id), displayName: String(contact.display_name), maskedNumber: maskWhatsAppNumber(String(contact.whatsapp_number)) })) });
   }));
   router.get('/rooms', asyncHandler(async (_req, res) => { const result = await db.query(`${listSql} ORDER BY r.created_at DESC`); res.json({ rooms: result.rows.map(mapRoom) }); }));
@@ -34,14 +49,16 @@ export function adminRoutes(db: Database, config: Config, livekit: LiveKitServic
     const roomResult = await db.query('SELECT id,name,public_room_id,status FROM study_rooms WHERE id=$1', [req.params.id]); const room = roomResult.rows[0];
     if (!room) throw new HttpError(404, 'ROOM_NOT_FOUND', 'Room not found.');
     if (room.status !== 'active') throw new HttpError(410, 'ROOM_CLOSED', 'This study room is no longer active.');
-    const targetResult = await db.query(`SELECT id,display_name,whatsapp_number FROM guest_sessions
-      WHERE id=ANY($1::uuid[]) AND whatsapp_consent=true AND whatsapp_number IS NOT NULL`, [selectedIds]);
+    const targetResult = await db.query(`SELECT profile.id,profile.display_name,profile.whatsapp_number,latest_session.id AS target_session_id
+      FROM guest_profiles profile
+      JOIN LATERAL (SELECT id FROM guest_sessions WHERE profile_id=profile.id ORDER BY joined_at DESC LIMIT 1) latest_session ON true
+      WHERE profile.id=ANY($1::uuid[]) AND profile.whatsapp_consent=true AND profile.whatsapp_number IS NOT NULL`, [selectedIds]);
     if (targetResult.rows.length !== selectedIds.length) throw new HttpError(409, 'WHATSAPP_CONTACT_UNAVAILABLE', 'One or more selected contacts are no longer available. Refresh the contact list.');
     const targetsById = new Map(targetResult.rows.map(target => [String(target.id), target]));
     const invitations = await prepareWhatsAppInvitations(db, {
       roomId: String(room.id), roomName: String(room.name), publicRoomId: String(room.public_room_id), webOrigin: config.WEB_ORIGIN,
       hostName: req.administrator!.username, administratorId: req.administrator!.id,
-      targets: selectedIds.map(id => { const target = targetsById.get(id)!; return { id, displayName: String(target.display_name), whatsappNumber: String(target.whatsapp_number) }; }),
+      targets: selectedIds.map(id => { const target = targetsById.get(id)!; return { id, targetSessionId: String(target.target_session_id), displayName: String(target.display_name), whatsappNumber: String(target.whatsapp_number) }; }),
     });
     res.status(201).json({ invitations });
   }));
@@ -54,7 +71,7 @@ export function adminRoutes(db: Database, config: Config, livekit: LiveKitServic
   router.get('/rooms/:id', asyncHandler(async (req, res) => { const result = await db.query(`${listSql} WHERE r.id=$1`, [req.params.id]); if (!result.rows[0]) throw new HttpError(404, 'ROOM_NOT_FOUND', 'Room not found.'); res.json({ room: mapRoom(result.rows[0]) }); }));
   router.patch('/rooms/:id', requireCsrf, asyncHandler(async (req, res) => { const input = roomInputSchema.partial().parse(req.body); assertFutureExpiry(input.expiresAt); const current = await db.query('SELECT * FROM study_rooms WHERE id=$1', [req.params.id]); if (!current.rows[0]) throw new HttpError(404, 'ROOM_NOT_FOUND', 'Room not found.'); const row = current.rows[0]; const passwordHash = input.password === null ? null : input.password ? await hashPassword(input.password) : row.room_password_hash; const result = await db.query(`UPDATE study_rooms SET name=$2,description=$3,subject=$4,max_participants=$5,chat_enabled=$6,screen_sharing_enabled=$7,waiting_room_enabled=$8,expires_at=$9,room_password_hash=$10,updated_at=now() WHERE id=$1 RETURNING *, (SELECT count(*)::int FROM guest_sessions g WHERE g.room_id=study_rooms.id AND g.left_at IS NULL AND g.approval_status='approved') active_participants`, [req.params.id, input.name ?? row.name, input.description ?? row.description, input.subject ?? row.subject, input.maxParticipants ?? row.max_participants, input.chatEnabled ?? row.chat_enabled, input.screenSharingEnabled ?? row.screen_sharing_enabled, input.waitingRoomEnabled ?? row.waiting_room_enabled, input.expiresAt === undefined ? row.expires_at : input.expiresAt, passwordHash]); res.json({ room: mapRoom(result.rows[0]) }); }));
   router.delete('/rooms/:id', requireCsrf, asyncHandler(async (req, res) => { await deleteStudyRoom(db, livekit, String(req.params.id)); res.status(204).end(); }));
-  router.get('/rooms/:id/participants', asyncHandler(async (req, res) => { const room = await db.query('SELECT livekit_room_name FROM study_rooms WHERE id=$1', [req.params.id]); if (!room.rows[0]) throw new HttpError(404, 'ROOM_NOT_FOUND', 'Room not found.'); const live = new Set(await livekit.activeIdentities(room.rows[0].livekit_room_name)); const result = await db.query(`SELECT id,guest_identity,display_name,avatar_id,joined_at,left_at,approval_status,last_seen_at FROM guest_sessions WHERE room_id=$1 AND ((approval_status='pending' AND left_at IS NULL) OR (approval_status='approved' AND left_at IS NULL AND last_seen_at>now()-interval '5 minutes') OR guest_identity=ANY($2::text[])) ORDER BY joined_at DESC LIMIT 100`, [req.params.id, [...live]]); res.json({ participants: result.rows.map(p => ({ id:p.id, identity:p.guest_identity, displayName:p.display_name, avatarId:p.avatar_id, joinedAt:new Date(p.joined_at).toISOString(), approvalStatus:p.approval_status, live: live.has(p.guest_identity) || (p.approval_status === 'approved' && !p.left_at && new Date(p.last_seen_at).getTime() > Date.now() - 5*60_000) })) }); }));
+  router.get('/rooms/:id/participants', asyncHandler(async (req, res) => { const room = await db.query('SELECT livekit_room_name FROM study_rooms WHERE id=$1', [req.params.id]); if (!room.rows[0]) throw new HttpError(404, 'ROOM_NOT_FOUND', 'Room not found.'); const live = new Set(await livekit.activeIdentities(room.rows[0].livekit_room_name)); const result = await db.query(`SELECT DISTINCT ON (profile_id) id,profile_id,guest_identity,display_name,avatar_id,joined_at,left_at,approval_status,last_seen_at FROM guest_sessions WHERE room_id=$1 AND ((approval_status='pending' AND left_at IS NULL) OR (approval_status='approved' AND left_at IS NULL AND last_seen_at>now()-interval '5 minutes') OR guest_identity=ANY($2::text[])) ORDER BY profile_id,joined_at DESC LIMIT 100`, [req.params.id, [...live]]); res.json({ participants: result.rows.map(p => ({ id:p.id, identity:p.guest_identity, displayName:p.display_name, avatarId:p.avatar_id, joinedAt:new Date(p.joined_at).toISOString(), approvalStatus:p.approval_status, live: live.has(p.guest_identity) || (p.approval_status === 'approved' && !p.left_at && new Date(p.last_seen_at).getTime() > Date.now() - 5*60_000) })) }); }));
   router.delete('/rooms/:id/participants/:identity', requireCsrf, asyncHandler(async (req, res) => { const room = await db.query('SELECT livekit_room_name FROM study_rooms WHERE id=$1', [req.params.id]); if (!room.rows[0]) throw new HttpError(404, 'ROOM_NOT_FOUND', 'Room not found.'); const identity = String(req.params.identity); await livekit.remove(room.rows[0].livekit_room_name, identity); await db.query('UPDATE guest_sessions SET left_at=COALESCE(left_at,now()) WHERE room_id=$1 AND guest_identity=$2', [req.params.id, identity]); res.status(204).end(); }));
   router.post('/rooms/:id/waiting/:sessionId', requireCsrf, asyncHandler(async (req, res) => {
     const approved = Boolean(req.body?.approved); const replacedIdentities: string[] = []; let livekitRoomName = '';
@@ -65,12 +82,10 @@ export function adminRoutes(db: Database, config: Config, livekit: LiveKitServic
         const room = await client.query('SELECT max_participants,livekit_room_name FROM study_rooms WHERE id=$1 FOR UPDATE', [req.params.id]);
         if (!room.rows[0]) throw new HttpError(404, 'ROOM_NOT_FOUND', 'Room not found.');
         livekitRoomName = String(room.rows[0].livekit_room_name);
-        const pending = await client.query(`SELECT client_id FROM guest_sessions WHERE id=$1 AND room_id=$2 AND approval_status='pending' AND left_at IS NULL FOR UPDATE`, [req.params.sessionId, req.params.id]);
+        const pending = await client.query(`SELECT profile_id FROM guest_sessions WHERE id=$1 AND room_id=$2 AND approval_status='pending' AND left_at IS NULL FOR UPDATE`, [req.params.sessionId, req.params.id]);
         if (!pending.rows[0]) throw new HttpError(404, 'WAITING_REQUEST_NOT_FOUND', 'Waiting request not found.');
-        if (pending.rows[0].client_id) {
-          const replaced = await client.query(`UPDATE guest_sessions SET left_at=now(),last_seen_at=now() WHERE room_id=$1 AND client_id=$2 AND id<>$3 AND left_at IS NULL AND approval_status='approved' RETURNING guest_identity`, [req.params.id, pending.rows[0].client_id, req.params.sessionId]);
-          replacedIdentities.push(...replaced.rows.map(row => String(row.guest_identity)));
-        }
+        const replaced = await client.query(`UPDATE guest_sessions SET left_at=now(),last_seen_at=now() WHERE room_id=$1 AND profile_id=$2 AND id<>$3 AND left_at IS NULL AND approval_status='approved' RETURNING guest_identity`, [req.params.id, pending.rows[0].profile_id, req.params.sessionId]);
+        replacedIdentities.push(...replaced.rows.map(row => String(row.guest_identity)));
         const active = await client.query(`SELECT count(*)::int AS total FROM guest_sessions WHERE room_id=$1 AND left_at IS NULL AND approval_status='approved' AND last_seen_at>now()-interval '5 minutes'`, [req.params.id]);
         if (active.rows[0].total >= room.rows[0].max_participants) throw new HttpError(409, 'ROOM_FULL', 'The room is at capacity.');
         await client.query(`UPDATE guest_sessions SET approval_status='approved',last_seen_at=now(),left_at=NULL WHERE id=$1 AND room_id=$2`, [req.params.sessionId, req.params.id]);

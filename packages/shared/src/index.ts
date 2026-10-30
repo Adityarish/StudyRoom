@@ -119,6 +119,7 @@ export interface RoomMember {
   displayName: string;
   avatarId: AvatarId;
   live: boolean;
+  isSelf: boolean;
   canNotify: boolean;
   emailReminderStatus: 'available' | 'cooldown' | 'unavailable';
   lastNotifiedAt: string | null;
@@ -129,6 +130,16 @@ export interface WhatsAppContact {
   id: string;
   displayName: string;
   maskedNumber: string;
+}
+
+export interface GuestContact {
+  id: string;
+  displayName: string;
+  email: string | null;
+  whatsappNumber: string | null;
+  joinCount: number;
+  createdAt: string;
+  lastJoinedAt: string;
 }
 
 export interface PreparedWhatsAppInvitation {

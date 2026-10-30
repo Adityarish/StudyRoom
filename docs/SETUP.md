@@ -49,6 +49,8 @@ StudyRoom uses Supabase only as server-side Postgres. It does not use the browse
 4. In **Table Editor > guest_sessions**, the optional `email`, `whatsapp_number`, and `whatsapp_consent` columns are populated atomically by the join request. WhatsApp numbers are normalized to `91XXXXXXXXXX`; contact values are never returned to other guests.
 5. Keep RLS enabled with no browser policies. Migration `006_supabase_privacy.sql` also revokes the `anon` and `authenticated` roles, because all access goes through the Express API.
 
+Migration `007_unique_guest_profiles.sql` separates a durable guest contact from individual room sessions. A join reuses the same `guest_profiles` row when any normalized email, normalized WhatsApp number, or stable browser client ID already exists. Historical duplicate sessions are consolidated during the migration, while `guest_sessions` remains the attendance/session history. The administrator can review the resulting one-row-per-person directory under **Unique guests**.
+
 The join is transactional: a meeting session is not created unless its contact fields are stored successfully in the same insert. If the room uses a waiting room, the row is stored when the guest requests entry and reused after approval.
 
 ### Optional email reminders

@@ -139,6 +139,7 @@ Verify each boundary separately:
 3. Vercel `/`, `/admin/login`, and a direct `/room/...` refresh return the React app rather than 404.
 4. Administrator login works, a room can be created, and its invitation opens on the Vercel domain.
 5. Join once with an email and opted-in WhatsApp number; verify one `guest_sessions` row contains the normalized values. Do not expose this verification screenshot publicly.
+   Also verify that `guest_profiles` contains one person and that repeat joins increase the join count in **Admin → Unique guests** without adding another profile.
 6. Two separate browser profiles can join the same room and see/hear each other through LiveKit.
 7. Chat updates over `wss://YOUR-RENDER-SERVICE.onrender.com/ws`.
 8. Camera, microphone, and screen-share permissions work on HTTPS.

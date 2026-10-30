@@ -12,6 +12,7 @@ import type { Config } from '../config.js';
 import type { NotificationMailer } from '../services/notification-mailer.js';
 import { prepareWhatsAppInvitations } from '../services/whatsapp-click-to-chat.js';
 import { normalizeGuestContact } from '../services/guest-contact.js';
+import { resolveGuestProfile } from '../services/guest-profile.js';
 
 const roomSelect = `SELECT r.*, (SELECT count(*) FROM guest_sessions g WHERE g.room_id=r.id AND g.left_at IS NULL AND g.approval_status='approved' AND g.last_seen_at > now()-interval '5 minutes')::int AS active_participants FROM study_rooms r`;
 
@@ -22,15 +23,16 @@ export function publicRoutes(db: Database, livekit: LiveKitService, mailer: Noti
     const input = guestJoinSchema.parse(req.body); const client = await db.connect();
     let replacedIdentities: string[] = [];
     try { await client.query('BEGIN'); const result = await client.query(`${roomSelect} WHERE r.public_room_id=$1 FOR UPDATE OF r`, [req.params.roomId]); const room = result.rows[0]; if (!room) throw new HttpError(404, 'ROOM_NOT_FOUND', 'This invitation does not match a study room.');
-      const replaced = await client.query(`UPDATE guest_sessions SET left_at=now(),last_seen_at=now() WHERE room_id=$1 AND client_id=$2 AND left_at IS NULL AND ($3::boolean=false OR approval_status='pending') RETURNING guest_identity,approval_status,last_seen_at`, [room.id, input.clientId, room.waiting_room_enabled]);
+      if (room.room_password_hash) { if (!input.roomPassword || !(await verifyPassword(input.roomPassword, room.room_password_hash))) throw new HttpError(403, 'ROOM_PASSWORD_INVALID', 'The room password is incorrect.'); }
+      const contact = normalizeGuestContact(input);
+      const profileId = await resolveGuestProfile(client, { clientId: input.clientId, displayName: input.displayName, avatarId: input.avatarId, presentation: input.presentation, ...contact });
+      const replaced = await client.query(`UPDATE guest_sessions SET left_at=now(),last_seen_at=now() WHERE room_id=$1 AND profile_id=$2 AND left_at IS NULL AND ($3::boolean=false OR approval_status='pending') RETURNING guest_identity,approval_status,last_seen_at`, [room.id, profileId, room.waiting_room_enabled]);
       replacedIdentities = replaced.rows.map(row => String(row.guest_identity));
       const replacedActive = replaced.rows.filter(row => row.approval_status === 'approved' && new Date(row.last_seen_at) > new Date(Date.now() - 300_000)).length;
-      const currentClient = room.waiting_room_enabled ? await client.query(`SELECT 1 FROM guest_sessions WHERE room_id=$1 AND client_id=$2 AND left_at IS NULL AND approval_status='approved' AND last_seen_at>now()-interval '5 minutes' LIMIT 1`, [room.id, input.clientId]) : null;
-      assertRoomJoinable({ ...room, active_participants: Math.max(0, Number(room.active_participants) - replacedActive) }, new Date(), Boolean(currentClient?.rowCount));
-      if (room.room_password_hash) { if (!input.roomPassword || !(await verifyPassword(input.roomPassword, room.room_password_hash))) throw new HttpError(403, 'ROOM_PASSWORD_INVALID', 'The room password is incorrect.'); }
+      const currentProfile = room.waiting_room_enabled ? await client.query(`SELECT 1 FROM guest_sessions WHERE room_id=$1 AND profile_id=$2 AND left_at IS NULL AND approval_status='approved' AND last_seen_at>now()-interval '5 minutes' LIMIT 1`, [room.id, profileId]) : null;
+      assertRoomJoinable({ ...room, active_participants: Math.max(0, Number(room.active_participants) - replacedActive) }, new Date(), Boolean(currentProfile?.rowCount));
       const identity = `guest_${randomToken(18)}`; const sessionToken = randomToken(); const waitingToken = randomToken(); const approval = room.waiting_room_enabled ? 'pending' : 'approved';
-      const contact = normalizeGuestContact(input);
-      const session = await client.query(`INSERT INTO guest_sessions(room_id,guest_identity,display_name,avatar_id,presentation,client_id,email,whatsapp_number,whatsapp_consent,session_token_hash,waiting_token_hash,approval_status) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) RETURNING id`, [room.id, identity, input.displayName, input.avatarId, input.presentation ?? null, input.clientId, contact.email, contact.whatsappNumber, contact.whatsappConsent, tokenHash(sessionToken), tokenHash(waitingToken), approval]);
+      const session = await client.query(`INSERT INTO guest_sessions(room_id,profile_id,guest_identity,display_name,avatar_id,presentation,client_id,email,whatsapp_number,whatsapp_consent,session_token_hash,waiting_token_hash,approval_status) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) RETURNING id`, [room.id, profileId, identity, input.displayName, input.avatarId, input.presentation ?? null, input.clientId, contact.email, contact.whatsappNumber, contact.whatsappConsent, tokenHash(sessionToken), tokenHash(waitingToken), approval]);
       await client.query('COMMIT');
       await Promise.all(replacedIdentities.map(previousIdentity => livekit.remove(room.livekit_room_name, previousIdentity).catch(() => {})));
       if (approval === 'pending') return res.status(202).json({ status: 'waiting', requestId: session.rows[0].id, requestToken: waitingToken });
@@ -44,22 +46,29 @@ export function publicRoutes(db: Database, livekit: LiveKitService, mailer: Noti
     if (!room.rows[0]) throw new HttpError(404, 'ROOM_NOT_FOUND', 'Room not found.');
     const live = new Set(await livekit.activeIdentities(room.rows[0].livekit_room_name));
     const result = await db.query(`WITH latest AS (
-      SELECT DISTINCT ON (COALESCE(client_id,id::text)) id,guest_identity,display_name,avatar_id,email,whatsapp_number,whatsapp_consent,joined_at
-      FROM guest_sessions
-      WHERE room_id=$1 AND approval_status='approved'
-      ORDER BY COALESCE(client_id,id::text),joined_at DESC
+      SELECT DISTINCT ON (session.profile_id) session.id,session.profile_id,session.guest_identity,session.display_name,session.avatar_id,
+        profile.email,profile.whatsapp_number,profile.whatsapp_consent,session.joined_at
+      FROM guest_sessions session
+      JOIN guest_profiles profile ON profile.id=session.profile_id
+      WHERE session.room_id=$1 AND session.approval_status='approved'
+      ORDER BY session.profile_id,session.joined_at DESC
     )
     SELECT latest.*,notification.sent_at AS last_notified_at
     FROM latest
-    LEFT JOIN LATERAL (SELECT sent_at FROM participant_notifications WHERE target_session_id=latest.id ORDER BY sent_at DESC LIMIT 1) notification ON true
+    LEFT JOIN LATERAL (
+      SELECT notification.sent_at FROM participant_notifications notification
+      JOIN guest_sessions notified_session ON notified_session.id=notification.target_session_id
+      WHERE notified_session.profile_id=latest.profile_id
+      ORDER BY notification.sent_at DESC LIMIT 1
+    ) notification ON true
     ORDER BY latest.joined_at DESC LIMIT 100`, [guest.roomId]);
     const now = Date.now();
     res.json({ members: result.rows.map(member => {
       const isLive = live.has(member.guest_identity); const lastNotifiedAt = member.last_notified_at ? new Date(member.last_notified_at).toISOString() : null;
-      const canReceiveReminder = mailer.configured && Boolean(member.email) && !isLive && member.id !== guest.id;
+      const canReceiveReminder = mailer.configured && Boolean(member.email) && !isLive && member.profile_id !== guest.profileId;
       const coolingDown = Boolean(canReceiveReminder && lastNotifiedAt && now - new Date(lastNotifiedAt).getTime() < 600_000);
       const emailReminderStatus = canReceiveReminder ? (coolingDown ? 'cooldown' : 'available') : 'unavailable';
-      return { id: member.id, displayName: member.display_name, avatarId: member.avatar_id, live: isLive, lastNotifiedAt, canNotify: emailReminderStatus === 'available', emailReminderStatus, canInviteOnWhatsApp: Boolean(member.whatsapp_consent && member.whatsapp_number) && member.id !== guest.id };
+      return { id: member.id, displayName: member.display_name, avatarId: member.avatar_id, live: isLive, isSelf: member.profile_id === guest.profileId, lastNotifiedAt, canNotify: emailReminderStatus === 'available', emailReminderStatus, canInviteOnWhatsApp: Boolean(member.whatsapp_consent && member.whatsapp_number) && member.profile_id !== guest.profileId };
     }) });
   }));
   router.post('/rooms/:roomId/whatsapp-invitations', guestAuth(db), asyncHandler(async (req, res) => {
@@ -71,9 +80,10 @@ export function publicRoutes(db: Database, livekit: LiveKitService, mailer: Noti
     const live = new Set(await livekit.activeIdentities(room.livekit_room_name));
     if (!live.has(guest.guestIdentity)) throw new HttpError(403, 'NOT_ACTIVE_IN_MEETING', 'Only an active meeting participant can prepare WhatsApp invitations.');
     const selectedIds = [...new Set(input.targetSessionIds)];
-    if (selectedIds.includes(guest.id)) throw new HttpError(400, 'CANNOT_INVITE_SELF', 'You cannot prepare a WhatsApp invitation for yourself.');
-    const targetResult = await db.query(`SELECT id,display_name,whatsapp_number FROM guest_sessions
-      WHERE room_id=$1 AND id=ANY($2::uuid[]) AND approval_status='approved' AND whatsapp_consent=true AND whatsapp_number IS NOT NULL`, [guest.roomId, selectedIds]);
+    const targetResult = await db.query(`SELECT session.id,session.display_name,profile.whatsapp_number FROM guest_sessions session
+      JOIN guest_profiles profile ON profile.id=session.profile_id
+      WHERE session.room_id=$1 AND session.id=ANY($2::uuid[]) AND session.profile_id<>$3 AND session.approval_status='approved'
+        AND profile.whatsapp_consent=true AND profile.whatsapp_number IS NOT NULL`, [guest.roomId, selectedIds, guest.profileId]);
     if (targetResult.rows.length !== selectedIds.length) throw new HttpError(409, 'WHATSAPP_CONTACT_UNAVAILABLE', 'One or more selected participants have not opted in with a valid WhatsApp number. Refresh the participant list.');
     const targetsById = new Map(targetResult.rows.map(target => [String(target.id), target]));
     const invitations = await prepareWhatsAppInvitations(db, {
@@ -94,11 +104,12 @@ export function publicRoutes(db: Database, livekit: LiveKitService, mailer: Noti
     const guest = req.guest; if (!guest || guest.publicRoomId !== req.params.roomId) throw new HttpError(403, 'ROOM_MISMATCH', 'This session belongs to another room.');
     if (!mailer.configured) throw new HttpError(503, 'SMTP_NOT_CONFIGURED', 'Email reminders are not configured for this StudyRoom server.');
     if (guest.id === req.params.targetSessionId) throw new HttpError(400, 'CANNOT_NOTIFY_SELF', 'You cannot send a reminder to yourself.');
-    const targetResult = await db.query(`SELECT g.id,g.guest_identity,g.display_name,g.email,r.name AS room_name,r.public_room_id,r.livekit_room_name,r.status
-      FROM guest_sessions g JOIN study_rooms r ON r.id=g.room_id
+    const targetResult = await db.query(`SELECT g.id,g.profile_id,g.guest_identity,g.display_name,profile.email,r.name AS room_name,r.public_room_id,r.livekit_room_name,r.status
+      FROM guest_sessions g JOIN guest_profiles profile ON profile.id=g.profile_id JOIN study_rooms r ON r.id=g.room_id
       WHERE g.id=$1 AND g.room_id=$2 AND g.approval_status='approved'`, [req.params.targetSessionId, guest.roomId]);
     const target = targetResult.rows[0];
     if (!target) throw new HttpError(404, 'PARTICIPANT_NOT_FOUND', 'That participant is no longer available.');
+    if (target.profile_id === guest.profileId) throw new HttpError(400, 'CANNOT_NOTIFY_SELF', 'You cannot send a reminder to yourself.');
     if (!target.email) throw new HttpError(409, 'EMAIL_NOT_PROVIDED', 'That participant did not opt in to email reminders.');
     if (target.status !== 'active') throw new HttpError(410, 'ROOM_CLOSED', 'This study room is no longer active.');
     const live = new Set(await livekit.activeIdentities(target.livekit_room_name));
@@ -108,8 +119,10 @@ export function publicRoutes(db: Database, livekit: LiveKitService, mailer: Noti
     const client = await db.connect(); let notificationId = '';
     try {
       await client.query('BEGIN');
-      await client.query('SELECT pg_advisory_xact_lock(hashtext($1))', [String(target.id)]);
-      const recent = await client.query(`SELECT 1 FROM participant_notifications WHERE target_session_id=$1 AND sent_at>now()-interval '10 minutes' LIMIT 1`, [target.id]);
+      await client.query('SELECT pg_advisory_xact_lock(hashtext($1))', [`email-reminder:${target.profile_id}`]);
+      const recent = await client.query(`SELECT 1 FROM participant_notifications notification
+        JOIN guest_sessions target_session ON target_session.id=notification.target_session_id
+        WHERE target_session.profile_id=$1 AND notification.sent_at>now()-interval '10 minutes' LIMIT 1`, [target.profile_id]);
       if (recent.rowCount) throw new HttpError(429, 'NOTIFICATION_COOLDOWN', 'A reminder was already sent recently. Try again later.');
       const inserted = await client.query(`INSERT INTO participant_notifications(room_id,requester_session_id,target_session_id) VALUES($1,$2,$3) RETURNING id,sent_at`, [guest.roomId, guest.id, target.id]);
       notificationId = String(inserted.rows[0].id);
