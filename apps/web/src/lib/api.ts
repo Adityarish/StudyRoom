@@ -3,12 +3,15 @@ import type { ApiError, GuestContact, JoinResponse, PreparedWhatsAppInvitation, 
 const configuredBackendUrl = (import.meta.env.VITE_API_URL as string | undefined)?.replace(/\/$/, '');
 const configuredPublicAppUrl = (import.meta.env.VITE_PUBLIC_APP_URL as string | undefined)?.trim().replace(/\/$/, '');
 const defaultProductionAppUrl = 'https://studyroom-liart.vercel.app';
+const defaultProductionBackendUrl = 'https://studyroom-api-0x2w.onrender.com';
 
 // Production HTTP requests stay on the Vercel origin and are forwarded to
 // Render by vercel.json. This keeps administrator cookies first-party. The
 // direct Render URL remains necessary for the WebSocket connection.
 export const API_URL = import.meta.env.PROD ? '' : configuredBackendUrl ?? 'http://localhost:4000';
-export const REALTIME_URL = configuredBackendUrl ?? (import.meta.env.PROD ? window.location.origin : 'http://localhost:4000');
+export const REALTIME_URL = import.meta.env.PROD
+  ? configuredBackendUrl && configuredBackendUrl !== window.location.origin ? configuredBackendUrl : defaultProductionBackendUrl
+  : configuredBackendUrl ?? 'http://localhost:4000';
 
 export function roomInvitationUrl(publicRoomId: string) {
   const appOrigin = configuredPublicAppUrl ?? (import.meta.env.PROD ? defaultProductionAppUrl : window.location.origin);

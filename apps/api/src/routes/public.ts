@@ -40,12 +40,16 @@ export function publicRoutes(db: Database, livekit: LiveKitService, mailer: Noti
     if (!room.rows[0]) throw new HttpError(404, 'ROOM_NOT_FOUND', 'Room not found.');
     const live = new Set(await livekit.activeIdentities(room.rows[0].livekit_room_name));
     const result = await db.query(`WITH latest AS (
-      SELECT DISTINCT ON (session.profile_id) session.id,session.profile_id,session.guest_identity,session.display_name,session.avatar_id,
-        profile.email,profile.whatsapp_number,profile.whatsapp_consent,session.joined_at
+      SELECT session.profile_id,
+        (array_agg(session.id ORDER BY session.joined_at DESC))[1] AS id,
+        (array_agg(session.display_name ORDER BY session.joined_at DESC))[1] AS display_name,
+        (array_agg(session.avatar_id ORDER BY session.joined_at DESC))[1] AS avatar_id,
+        array_agg(DISTINCT session.guest_identity) AS guest_identities,
+        profile.email,profile.whatsapp_number,profile.whatsapp_consent,max(session.joined_at) AS joined_at
       FROM guest_sessions session
       JOIN guest_profiles profile ON profile.id=session.profile_id
       WHERE session.room_id=$1 AND session.approval_status='approved'
-      ORDER BY session.profile_id,session.joined_at DESC
+      GROUP BY session.profile_id,profile.email,profile.whatsapp_number,profile.whatsapp_consent
     )
     SELECT latest.*,notification.sent_at AS last_notified_at
     FROM latest
@@ -58,11 +62,12 @@ export function publicRoutes(db: Database, livekit: LiveKitService, mailer: Noti
     ORDER BY latest.joined_at DESC LIMIT 100`, [guest.roomId]);
     const now = Date.now();
     res.json({ members: result.rows.map(member => {
-      const isLive = live.has(member.guest_identity); const lastNotifiedAt = member.last_notified_at ? new Date(member.last_notified_at).toISOString() : null;
+      const identities = (member.guest_identities as string[] | null) ?? [];
+      const isLive = identities.some(identity => live.has(identity)); const lastNotifiedAt = member.last_notified_at ? new Date(member.last_notified_at).toISOString() : null;
       const canReceiveReminder = mailer.configured && Boolean(member.email) && !isLive && member.profile_id !== guest.profileId;
       const coolingDown = Boolean(canReceiveReminder && lastNotifiedAt && now - new Date(lastNotifiedAt).getTime() < 600_000);
       const emailReminderStatus = canReceiveReminder ? (coolingDown ? 'cooldown' : 'available') : 'unavailable';
-      return { id: member.id, displayName: member.display_name, avatarId: member.avatar_id, live: isLive, isSelf: member.profile_id === guest.profileId, lastNotifiedAt, canNotify: emailReminderStatus === 'available', emailReminderStatus, canInviteOnWhatsApp: Boolean(member.whatsapp_consent && member.whatsapp_number) && member.profile_id !== guest.profileId };
+      return { id: member.id, displayName: member.display_name, avatarId: member.avatar_id, identities, live: isLive, isSelf: member.profile_id === guest.profileId, lastNotifiedAt, canNotify: emailReminderStatus === 'available', emailReminderStatus, canInviteOnWhatsApp: Boolean(member.whatsapp_consent && member.whatsapp_number) && member.profile_id !== guest.profileId };
     }) });
   }));
   router.post('/rooms/:roomId/whatsapp-invitations', guestAuth(db), asyncHandler(async (req, res) => {
@@ -98,7 +103,8 @@ export function publicRoutes(db: Database, livekit: LiveKitService, mailer: Noti
     const guest = req.guest; if (!guest || guest.publicRoomId !== req.params.roomId) throw new HttpError(403, 'ROOM_MISMATCH', 'This session belongs to another room.');
     if (!mailer.configured) throw new HttpError(503, 'SMTP_NOT_CONFIGURED', 'Email reminders are not configured for this StudyRoom server.');
     if (guest.id === req.params.targetSessionId) throw new HttpError(400, 'CANNOT_NOTIFY_SELF', 'You cannot send a reminder to yourself.');
-    const targetResult = await db.query(`SELECT g.id,g.profile_id,g.guest_identity,g.display_name,profile.email,r.name AS room_name,r.public_room_id,r.livekit_room_name,r.status
+    const targetResult = await db.query(`SELECT g.id,g.profile_id,g.guest_identity,g.display_name,profile.email,r.name AS room_name,r.public_room_id,r.livekit_room_name,r.status,
+        ARRAY(SELECT sibling.guest_identity FROM guest_sessions sibling WHERE sibling.profile_id=g.profile_id AND sibling.room_id=g.room_id AND sibling.approval_status='approved') AS guest_identities
       FROM guest_sessions g JOIN guest_profiles profile ON profile.id=g.profile_id JOIN study_rooms r ON r.id=g.room_id
       WHERE g.id=$1 AND g.room_id=$2 AND g.approval_status='approved'`, [req.params.targetSessionId, guest.roomId]);
     const target = targetResult.rows[0];
@@ -108,7 +114,7 @@ export function publicRoutes(db: Database, livekit: LiveKitService, mailer: Noti
     if (target.status !== 'active') throw new HttpError(410, 'ROOM_CLOSED', 'This study room is no longer active.');
     const live = new Set(await livekit.activeIdentities(target.livekit_room_name));
     if (!live.has(guest.guestIdentity)) throw new HttpError(403, 'NOT_ACTIVE_IN_MEETING', 'Only an active meeting participant can send reminders.');
-    if (live.has(target.guest_identity)) throw new HttpError(409, 'PARTICIPANT_ACTIVE', 'That participant is already active in the meeting.');
+    if (((target.guest_identities as string[] | null) ?? []).some(identity => live.has(identity))) throw new HttpError(409, 'PARTICIPANT_ACTIVE', 'That participant is already active in the meeting.');
 
     const client = await db.connect(); let notificationId = '';
     try {

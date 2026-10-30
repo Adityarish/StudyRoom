@@ -13,25 +13,41 @@ interface GuestProfileInput {
 type IdentifierKind = 'client' | 'email' | 'whatsapp';
 
 export async function resolveGuestProfile(client: PoolClient, input: GuestProfileInput) {
-  const identifiers: Array<{ kind: IdentifierKind; value: string }> = [{ kind: 'client', value: input.clientId }];
-  if (input.email) identifiers.push({ kind: 'email', value: input.email });
-  if (input.whatsappNumber) identifiers.push({ kind: 'whatsapp', value: input.whatsappNumber });
-  identifiers.sort((a, b) => `${a.kind}:${a.value}`.localeCompare(`${b.kind}:${b.value}`));
+  const contactIdentifiers: Array<{ kind: IdentifierKind; value: string }> = [];
+  const hasContactIdentifier = Boolean(input.email || input.whatsappNumber);
+  if (input.email) contactIdentifiers.push({ kind: 'email', value: input.email });
+  if (input.whatsappNumber) contactIdentifiers.push({ kind: 'whatsapp', value: input.whatsappNumber });
+  const lockIdentifiers = [...contactIdentifiers, { kind: 'client' as const, value: input.clientId }]
+    .sort((a, b) => `${a.kind}:${a.value}`.localeCompare(`${b.kind}:${b.value}`));
 
-  for (const identifier of identifiers) {
+  for (const identifier of lockIdentifiers) {
     await client.query('SELECT pg_advisory_xact_lock(hashtext($1))', [`guest-profile:${identifier.kind}:${identifier.value}`]);
   }
 
-  const matches = await client.query<{ id: string }>(`SELECT DISTINCT profile.id
+  const contactMatches = await client.query<{ id: string }>(`SELECT DISTINCT profile.id
     FROM guest_profiles profile
     JOIN guest_profile_identifiers identifier ON identifier.profile_id=profile.id
     WHERE ($1::text IS NOT NULL AND identifier.kind='email' AND identifier.value=$1)
        OR ($2::text IS NOT NULL AND identifier.kind='whatsapp' AND identifier.value=$2)
-       OR (identifier.kind='client' AND identifier.value=$3)
-    ORDER BY profile.id`, [input.email, input.whatsappNumber, input.clientId]);
+    ORDER BY profile.id`, [input.email, input.whatsappNumber]);
+
+  let matches = contactMatches.rows;
+  let matchedContactlessClient = false;
+  if (matches.length === 0) {
+    const clientMatch = await client.query<{ id: string; email: string | null; whatsapp_number: string | null }>(`SELECT profile.id,profile.email,profile.whatsapp_number
+      FROM guest_profiles profile
+      JOIN guest_profile_identifiers identifier ON identifier.profile_id=profile.id
+      WHERE identifier.kind='client' AND identifier.value=$1
+      LIMIT 1`, [input.clientId]);
+    const existing = clientMatch.rows[0];
+    if (existing && (!hasContactIdentifier || (!existing.email && !existing.whatsapp_number))) {
+      matches = [{ id: existing.id }];
+      matchedContactlessClient = hasContactIdentifier;
+    }
+  }
 
   let profileId: string;
-  if (matches.rows.length === 0) {
+  if (matches.length === 0) {
     const created = await client.query<{ id: string }>(`INSERT INTO guest_profiles(
       display_name,avatar_id,presentation,email,whatsapp_number,whatsapp_consent,last_joined_at
     ) VALUES($1,$2,$3,$4,$5,$6,now()) RETURNING id`, [
@@ -40,8 +56,8 @@ export async function resolveGuestProfile(client: PoolClient, input: GuestProfil
     ]);
     profileId = created.rows[0]!.id;
   } else {
-    profileId = matches.rows[0]!.id;
-    const duplicateIds = matches.rows.slice(1).map(row => row.id);
+    profileId = matches[0]!.id;
+    const duplicateIds = matches.slice(1).map(row => row.id);
     if (duplicateIds.length) {
       await client.query('UPDATE guest_sessions SET profile_id=$1 WHERE profile_id=ANY($2::uuid[])', [profileId, duplicateIds]);
       await client.query('UPDATE guest_profile_identifiers SET profile_id=$1 WHERE profile_id=ANY($2::uuid[])', [profileId, duplicateIds]);
@@ -55,6 +71,12 @@ export async function resolveGuestProfile(client: PoolClient, input: GuestProfil
       WHERE id=$1`, [profileId, input.displayName, input.avatarId, input.presentation ?? null, input.email, input.whatsappNumber, input.whatsappConsent]);
   }
 
+  // A shared browser is not proof that two named/contactable guests are the
+  // same person. Keep the browser identifier only for contactless profiles or
+  // when a contactless profile is being upgraded with its first contact.
+  const identifiers = hasContactIdentifier && !matchedContactlessClient
+    ? contactIdentifiers
+    : [...contactIdentifiers, { kind: 'client' as const, value: input.clientId }];
   for (const identifier of identifiers) {
     await client.query(`INSERT INTO guest_profile_identifiers(kind,value,profile_id)
       VALUES($1,$2,$3)

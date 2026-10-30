@@ -118,6 +118,7 @@ export interface RoomMember {
   id: string;
   displayName: string;
   avatarId: AvatarId;
+  identities: string[];
   live: boolean;
   isSelf: boolean;
   canNotify: boolean;
