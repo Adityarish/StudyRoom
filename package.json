@@ -9,7 +9,7 @@
     "build": "npm run build -w @studyroom/shared && npm run build -w @studyroom/api && npm run build -w @studyroom/web",
     "build:api": "npm run build -w @studyroom/shared && npm run build -w @studyroom/api",
     "build:web": "npm run build -w @studyroom/shared && npm run build -w @studyroom/web",
-    "render:start": "npm run db:migrate && if [ -n \"$ADMIN_BOOTSTRAP_USERNAME$ADMIN_BOOTSTRAP_PASSWORD\" ]; then npm run admin:bootstrap; fi && npm run start",
+    "render:start": "npm run db:migrate && if [ -z \"$ADMIN_BOOTSTRAP_USERNAME\" ] && [ -z \"$ADMIN_BOOTSTRAP_PASSWORD\" ]; then echo 'Admin bootstrap skipped: temporary variables are not set.'; elif [ ${#ADMIN_BOOTSTRAP_USERNAME} -ge 3 ] && [ ${#ADMIN_BOOTSTRAP_PASSWORD} -ge 12 ]; then npm run admin:bootstrap; else echo 'WARNING: Admin bootstrap skipped. Set both ADMIN_BOOTSTRAP_USERNAME (3+ characters) and ADMIN_BOOTSTRAP_PASSWORD (12+ characters).' >&2; fi && npm run start",
     "typecheck": "npm run build -w @studyroom/shared && npm run typecheck -w @studyroom/api && npm run typecheck -w @studyroom/web",
     "lint": "eslint apps packages --max-warnings=0",
     "test": "npm run test -w @studyroom/api && npm run test -w @studyroom/web",

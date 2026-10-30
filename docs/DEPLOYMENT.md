@@ -93,6 +93,8 @@ In **Render > studyroom-api > Environment**, add these two temporary secret valu
 - `ADMIN_BOOTSTRAP_USERNAME=admin`
 - `ADMIN_BOOTSTRAP_PASSWORD` set to a new private password with at least 12 characters
 
+Create them as two separate Render environment variables. Use the exact uppercase names, do not add quotes around dashboard values, and make sure neither value is empty. If either value is missing or too short, startup skips bootstrap with a warning and continues serving the API; correct the values and deploy again to create the administrator.
+
 Save the environment and deploy the latest commit. The startup command applies migrations, creates or resets that administrator in the same database used by the API, and then starts the service. In the deployment logs, confirm this message appears:
 
 ```text
