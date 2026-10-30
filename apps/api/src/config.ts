@@ -25,11 +25,20 @@ const schema = z.object({
   SMTP_PASS: optionalString,
   SMTP_FROM: optionalString,
   TRUST_PROXY: z.string().default('false'),
+  EMAIL_PROVIDER: z.enum(['supabase', 'smtp', 'none']).optional(),
+  SUPABASE_URL: optionalString.default('https://xsymqphrfkklhegnkhav.supabase.co'),
+  SUPABASE_ANON_KEY: optionalString,
+  SUPABASE_SERVICE_ROLE_KEY: optionalString,
 });
 
 export type Config = z.infer<typeof schema>;
 export function loadConfig(environment: NodeJS.ProcessEnv = process.env): Config {
-  const result = schema.safeParse(environment);
+  const merged = {
+    ...environment,
+    SUPABASE_ANON_KEY: environment.SUPABASE_ANON_KEY || environment.VITE_SUPABASE_ANON_KEY,
+    SUPABASE_URL: environment.SUPABASE_URL || environment.VITE_SUPABASE_URL || 'https://xsymqphrfkklhegnkhav.supabase.co',
+  };
+  const result = schema.safeParse(merged);
   if (!result.success) {
     const fields = result.error.issues.map(i => `${i.path.join('.')}: ${i.message}`).join('\n');
     throw new Error(`Invalid environment configuration:\n${fields}`);

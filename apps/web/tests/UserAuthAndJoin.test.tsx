@@ -217,4 +217,57 @@ describe('User Supabase Authentication and Onboarding Flow', () => {
       );
     });
   });
+
+  it('allows user to clear all characters in display name without it snapping back', async () => {
+    localStorage.setItem(
+      'studyroom.auth.user',
+      JSON.stringify({
+        id: 'dev_user_2',
+        email: 'taylor@studyroom.io',
+        user_metadata: { displayName: 'Taylor Swift' },
+      })
+    );
+
+    vi.spyOn(api, 'getRoom').mockResolvedValue({
+      room: {
+        publicRoomId: 'room-math',
+        name: 'Math Session',
+        subject: 'Math',
+        description: '',
+        status: 'active',
+        activeParticipants: 1,
+        maxParticipants: 10,
+        waitingRoomEnabled: false,
+        passwordRequired: false,
+        screenSharingEnabled: true,
+        chatEnabled: true,
+        expiresAt: null,
+      },
+    });
+
+    render(
+      <AuthProvider>
+        <MemoryRouter initialEntries={['/room/math-1']}>
+          <Routes>
+            <Route path="/room/:roomId" element={<PreJoinPage />} />
+          </Routes>
+        </MemoryRouter>
+      </AuthProvider>
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText('Math Session')).toBeInTheDocument();
+    });
+
+    const nameInput = screen.getByPlaceholderText('Enter your name') as HTMLInputElement;
+    expect(nameInput.value).toBe('Taylor Swift');
+
+    // Clear the name input completely
+    await userEvent.clear(nameInput);
+    expect(nameInput.value).toBe('');
+
+    // Type a new custom name
+    await userEvent.type(nameInput, 'Dr. Taylor');
+    expect(nameInput.value).toBe('Dr. Taylor');
+  });
 });

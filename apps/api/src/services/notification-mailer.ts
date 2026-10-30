@@ -20,8 +20,8 @@ export function normalizeSmtpPassword(host: string | undefined, password: string
   return host?.toLowerCase() === 'smtp.gmail.com' ? password.replace(/\s+/g, '') : password;
 }
 
-export type EmailProvider = 'smtp' | 'none';
-export type EmailDeliveryStatus = 'unconfigured' | 'unchecked' | 'checking' | 'ready' | 'error';
+export type EmailProvider = 'supabase' | 'smtp' | 'none';
+export type EmailDeliveryStatus = 'unconfigured' | 'checking' | 'ready' | 'error';
 
 class EmailProviderError extends Error {
   constructor(readonly code: string) { super(code); }
@@ -44,10 +44,25 @@ export class NotificationMailer {
   status: EmailDeliveryStatus;
 
   constructor(private config: Config) {
+    const supabaseKey = config.SUPABASE_SERVICE_ROLE_KEY || config.SUPABASE_ANON_KEY;
+    const supabaseConfigured = Boolean(config.SUPABASE_URL && supabaseKey);
     const smtpConfigured = Boolean(config.SMTP_HOST && config.SMTP_PORT && config.SMTP_USER && config.SMTP_PASS);
-    this.provider = smtpConfigured ? 'smtp' : 'none';
+
+    if (config.EMAIL_PROVIDER === 'supabase' && supabaseConfigured) {
+      this.provider = 'supabase';
+    } else if (config.EMAIL_PROVIDER === 'smtp' && smtpConfigured) {
+      this.provider = 'smtp';
+    } else if (supabaseConfigured) {
+      this.provider = 'supabase';
+    } else if (smtpConfigured) {
+      this.provider = 'smtp';
+    } else {
+      this.provider = 'none';
+    }
+
     this.configured = this.provider !== 'none';
-    this.status = this.configured ? 'unchecked' : 'unconfigured';
+    this.status = this.configured ? 'ready' : 'unconfigured';
+
     if (this.provider === 'smtp') {
       this.transporter = nodemailer.createTransport({
         host: config.SMTP_HOST,
@@ -63,6 +78,25 @@ export class NotificationMailer {
 
   async verify() {
     if (!this.configured) throw new EmailProviderError('EMAIL_NOT_CONFIGURED');
+    if (this.provider === 'supabase') {
+      this.status = 'checking';
+      try {
+        const supabaseUrl = (this.config.SUPABASE_URL || 'https://xsymqphrfkklhegnkhav.supabase.co').replace(/\/+$/, '');
+        const apiKey = this.config.SUPABASE_SERVICE_ROLE_KEY || this.config.SUPABASE_ANON_KEY || '';
+        const response = await fetch(`${supabaseUrl}/auth/v1/settings`, {
+          headers: apiKey ? { apikey: apiKey, Authorization: `Bearer ${apiKey}` } : {},
+        });
+        if (response.ok || response.status === 401 || response.status === 403 || response.status === 200) {
+          this.status = 'ready';
+        } else {
+          this.status = 'error';
+        }
+      } catch {
+        this.status = 'error';
+      }
+      return;
+    }
+
     this.status = 'checking';
     try {
       await this.transporter!.verify();
@@ -75,6 +109,43 @@ export class NotificationMailer {
 
   async sendReminder(input: ReminderInput) {
     if (!this.configured) throw new EmailProviderError('EMAIL_NOT_CONFIGURED');
+
+    if (this.provider === 'supabase') {
+      const supabaseUrl = (this.config.SUPABASE_URL || 'https://xsymqphrfkklhegnkhav.supabase.co').replace(/\/+$/, '');
+      const apiKey = this.config.SUPABASE_SERVICE_ROLE_KEY || this.config.SUPABASE_ANON_KEY || '';
+      try {
+        const response = await fetch(`${supabaseUrl}/auth/v1/otp`, {
+          method: 'POST',
+          headers: {
+            'apikey': apiKey,
+            'Authorization': `Bearer ${apiKey}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            email: input.to,
+            email_redirect_to: input.roomUrl,
+            data: {
+              targetName: input.targetName,
+              requesterName: input.requesterName,
+              roomName: input.roomName,
+              roomUrl: input.roomUrl,
+            },
+          }),
+        });
+
+        if (!response.ok) {
+          const body = await response.text().catch(() => '');
+          throw new Error(`Supabase email delivery failed (${response.status}): ${body || response.statusText}`);
+        }
+
+        this.status = 'ready';
+        return { messageId: `supabase_${Date.now()}` };
+      } catch (error) {
+        this.status = 'error';
+        throw error;
+      }
+    }
+
     try {
       const target = escapeHtml(input.targetName); const requester = escapeHtml(input.requesterName); const room = escapeHtml(input.roomName); const url = escapeHtml(input.roomUrl);
       const result = await this.transporter!.sendMail({

@@ -29,6 +29,7 @@ export function PreJoinPage() {
   const [loading, setLoading] = useState(true);
   const initialName: string = stored.displayName || (typeof user?.user_metadata?.displayName === 'string' ? user.user_metadata.displayName : '') || (user?.email ? (user.email.split('@')[0] ?? '') : '');
   const [name, setName] = useState<string>(initialName);
+  const nameInitializedRef = useRef(Boolean(initialName.trim()));
   const [whatsappNumber, setWhatsappNumber] = useState('');
   const [whatsappConsent, setWhatsappConsent] = useState(false);
   const [avatar, setAvatar] = useState<AvatarId>((stored.avatarId || 'nova') as AvatarId);
@@ -48,12 +49,17 @@ export function PreJoinPage() {
   const initialPreviewStartedRef = useRef(false);
 
   useEffect(() => {
-    if (user && !name) {
+    if (nameInitializedRef.current) return;
+    if (user) {
       const metaName = (user.user_metadata?.displayName as string) || (user.user_metadata?.full_name as string);
       const fallback = metaName || (user.email ? user.email.split('@')[0] : '');
-      if (fallback) setName(stored.displayName || fallback);
+      const determined = stored.displayName || fallback;
+      if (determined) {
+        setName(determined);
+        nameInitializedRef.current = true;
+      }
     }
-  }, [user, name, stored.displayName]);
+  }, [user, stored.displayName]);
 
   useEffect(() => {
     api.getRoom(roomId).then(r => setRoom(r.room)).catch(e => setPageError(e instanceof Error ? e.message : 'Room not found')).finally(() => setLoading(false));
