@@ -6,7 +6,7 @@ import { ConnectionQuality, LocalParticipant, Participant, RemoteTrackPublicatio
 import type { AvatarId, LayoutMode, QualityMode, RealtimeServerMessage, RoomMember, WhatsAppContact } from '@studyroom/shared';
 import { Avatar } from '../components/Avatar';
 import { WhatsAppInviteDialog } from '../components/WhatsAppInviteDialog';
-import { api } from '../lib/api';
+import { API_URL, api } from '../lib/api';
 import { copyText } from '../lib/clipboard';
 import { guestSession } from '../lib/guest';
 import { useRealtime } from '../hooks/useRealtime';
@@ -65,7 +65,7 @@ export function MeetingPage() {
   useEffect(() => () => { reactionTimers.current.forEach(timer => window.clearTimeout(timer)); reactionTimers.current.clear(); }, []);
   useEffect(() => { for (const p of room.remoteParticipants.values()) for (const pub of p.videoTrackPublications.values()) { if (!(pub instanceof RemoteTrackPublication)) continue; if (audioOnly) pub.setSubscribed(false); else { pub.setSubscribed(true); const important = p.identity === (pinned || activeSpeaker); const desired = quality === 'high' ? VideoQuality.HIGH : quality === 'balanced' ? (important ? VideoQuality.HIGH : VideoQuality.MEDIUM) : (important ? VideoQuality.MEDIUM : VideoQuality.LOW); pub.setVideoQuality(desired); } } }, [audioOnly, quality, layout, pinned, activeSpeaker, participants, room]);
   const leave = useCallback(async () => { if (joined) await api.leaveRoom(roomId, joined.sessionId, joined.sessionToken).catch(() => {}); await room.disconnect(); guestSession.clear(roomId); navigate(`/room/${roomId}`); }, [joined, room, roomId, navigate]);
-  useEffect(() => { const fn = () => { if (joined) navigator.sendBeacon(`${(import.meta.env.VITE_API_URL as string | undefined) ?? 'http://localhost:4000'}/api/rooms/${roomId}/leave-beacon`, JSON.stringify({ sessionId: joined.sessionId, sessionToken: joined.sessionToken })); }; window.addEventListener('pagehide', fn); return () => window.removeEventListener('pagehide', fn); }, [joined, roomId]);
+  useEffect(() => { const fn = () => { if (joined) navigator.sendBeacon(`${API_URL}/api/rooms/${roomId}/leave-beacon`, JSON.stringify({ sessionId: joined.sessionId, sessionToken: joined.sessionToken })); }; window.addEventListener('pagehide', fn); return () => window.removeEventListener('pagehide', fn); }, [joined, roomId]);
   async function toggleMic() { try { const next = !micOn; await room.localParticipant.setMicrophoneEnabled(next); setMicOn(next); refresh(); } catch { setError('Microphone access failed. Check browser permissions.'); } }
   async function toggleCamera() { try { const next = !cameraOn; await room.localParticipant.setCameraEnabled(next, next ? qualityPreset[quality].resolution : undefined, next ? qualityPublishOptions[quality] : undefined); setCameraOn(next); refresh(); } catch { setError('Camera access failed. Try another device in settings.'); } }
   async function toggleScreen() { if (!joined?.room.screenSharingEnabled) return; try { const next = !screenOn; await room.localParticipant.setScreenShareEnabled(next, { resolution: { width: 1920, height: 1080, frameRate: 15 }, audio: false }, { screenShareEncoding: { maxBitrate: 5_500_000, maxFramerate: 15, priority: 'high' }, screenShareSimulcastLayers: [VideoPresets.h360, VideoPresets.h720] }); setScreenOn(next); refresh(); } catch { setError('Screen sharing was cancelled or is unavailable.'); } }

@@ -79,10 +79,10 @@ If you use a paid Render web plan, you can move `npm run db:migrate` from `start
 2. Keep the repository root as the Vercel Root Directory. `vercel.json` supplies the Vite build and `apps/web/dist` output path.
 3. Add one Production environment variable:
    - `VITE_API_URL=https://YOUR-RENDER-SERVICE.onrender.com`
-4. Deploy. The SPA rewrite in `vercel.json` keeps `/room/...` and `/admin/...` working on refresh.
+4. Update the `/api/:path*` destination in `vercel.json` if your Render service URL differs from the checked-in URL, then deploy. Vercel forwards browser HTTP API requests to Render under the Vercel origin so administrator cookies remain first-party. The SPA rewrite keeps `/room/...` and `/admin/...` working on refresh.
 5. Copy the final Vercel production origin back into Render's `WEB_ORIGIN` and redeploy/restart the API if it changed.
 
-`VITE_API_URL` is compiled into the frontend, so changing it requires a new Vercel deployment.
+`VITE_API_URL` is compiled into the frontend for its direct Render WebSocket connection. Changing it or the HTTP proxy destination requires a new Vercel deployment.
 
 ## 6. Create the first administrator
 

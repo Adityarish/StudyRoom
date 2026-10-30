@@ -1,6 +1,12 @@
 import type { ApiError, JoinResponse, PreparedWhatsAppInvitation, PublicRoom, RoomMember, WaitingResponse, WhatsAppContact } from '@studyroom/shared';
 
-export const API_URL = (import.meta.env.VITE_API_URL as string | undefined)?.replace(/\/$/, '') ?? 'http://localhost:4000';
+const configuredBackendUrl = (import.meta.env.VITE_API_URL as string | undefined)?.replace(/\/$/, '');
+
+// Production HTTP requests stay on the Vercel origin and are forwarded to
+// Render by vercel.json. This keeps administrator cookies first-party. The
+// direct Render URL remains necessary for the WebSocket connection.
+export const API_URL = import.meta.env.PROD ? '' : configuredBackendUrl ?? 'http://localhost:4000';
+export const REALTIME_URL = configuredBackendUrl ?? (import.meta.env.PROD ? window.location.origin : 'http://localhost:4000');
 
 export class ApiRequestError extends Error {
   constructor(public status: number, public code: string, message: string, public details?: unknown) { super(message); }

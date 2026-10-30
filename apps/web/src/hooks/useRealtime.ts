@@ -1,11 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { RealtimeClientMessage, RealtimeServerMessage } from '@studyroom/shared';
-import { API_URL } from '../lib/api';
+import { REALTIME_URL } from '../lib/api';
 
 export function useRealtime(roomId: string, sessionId: string, sessionToken: string) {
   const wsRef = useRef<WebSocket | null>(null); const [messages, setMessages] = useState<RealtimeServerMessage[]>([]); const [connected, setConnected] = useState(false); const [unread, setUnread] = useState(0);
   useEffect(() => {
-    const url = new URL(API_URL); const protocol = url.protocol === 'https:' ? 'wss:' : 'ws:'; let active = true; let retryTimer: number | undefined; let attempts = 0;
+    const url = new URL(REALTIME_URL); const protocol = url.protocol === 'https:' ? 'wss:' : 'ws:'; let active = true; let retryTimer: number | undefined; let attempts = 0;
     const connect = () => {
       if (!active) return;
       const ws = new WebSocket(`${protocol}//${url.host}/ws`); wsRef.current = ws;
