@@ -56,7 +56,10 @@ export function publicRoutes(db: Database, livekit: LiveKitService, mailer: Noti
     const now = Date.now();
     res.json({ members: result.rows.map(member => {
       const isLive = live.has(member.guest_identity); const lastNotifiedAt = member.last_notified_at ? new Date(member.last_notified_at).toISOString() : null;
-      return { id: member.id, displayName: member.display_name, avatarId: member.avatar_id, live: isLive, lastNotifiedAt, canNotify: mailer.configured && Boolean(member.email) && !isLive && member.id !== guest.id && (!lastNotifiedAt || now - new Date(lastNotifiedAt).getTime() >= 600_000), canInviteOnWhatsApp: Boolean(member.whatsapp_consent && member.whatsapp_number) && member.id !== guest.id };
+      const canReceiveReminder = mailer.configured && Boolean(member.email) && !isLive && member.id !== guest.id;
+      const coolingDown = Boolean(canReceiveReminder && lastNotifiedAt && now - new Date(lastNotifiedAt).getTime() < 600_000);
+      const emailReminderStatus = canReceiveReminder ? (coolingDown ? 'cooldown' : 'available') : 'unavailable';
+      return { id: member.id, displayName: member.display_name, avatarId: member.avatar_id, live: isLive, lastNotifiedAt, canNotify: emailReminderStatus === 'available', emailReminderStatus, canInviteOnWhatsApp: Boolean(member.whatsapp_consent && member.whatsapp_number) && member.id !== guest.id };
     }) });
   }));
   router.post('/rooms/:roomId/whatsapp-invitations', guestAuth(db), asyncHandler(async (req, res) => {

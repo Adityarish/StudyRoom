@@ -15,6 +15,11 @@ export function escapeHtml(value: string) {
 
 function singleLine(value: string) { return value.replace(/[\r\n]+/g, ' ').trim(); }
 
+export function normalizeSmtpPassword(host: string | undefined, password: string | undefined) {
+  if (!password) return password;
+  return host?.toLowerCase() === 'smtp.gmail.com' ? password.replace(/\s+/g, '') : password;
+}
+
 export class NotificationMailer {
   private transporter: Transporter | null = null;
   readonly configured: boolean;
@@ -26,7 +31,7 @@ export class NotificationMailer {
         host: config.SMTP_HOST,
         port: config.SMTP_PORT,
         secure: config.SMTP_SECURE ?? config.SMTP_PORT === 465,
-        auth: { user: config.SMTP_USER, pass: config.SMTP_PASS },
+        auth: { user: config.SMTP_USER, pass: normalizeSmtpPassword(config.SMTP_HOST, config.SMTP_PASS) },
       });
     }
   }

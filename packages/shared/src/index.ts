@@ -120,6 +120,7 @@ export interface RoomMember {
   avatarId: AvatarId;
   live: boolean;
   canNotify: boolean;
+  emailReminderStatus: 'available' | 'cooldown' | 'unavailable';
   lastNotifiedAt: string | null;
   canInviteOnWhatsApp: boolean;
 }

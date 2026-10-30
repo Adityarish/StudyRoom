@@ -126,7 +126,9 @@ Add these only to the Render API service, never to Vercel:
 - `SMTP_PASS`
 - `SMTP_FROM` (optional)
 
-For Gmail, use `smtp.gmail.com`, port `465`, `SMTP_SECURE=true`, the full Gmail address, and a Google App Password. Verify connectivity from a Render Shell with `npm run smtp:check`; this checks the connection without sending an email.
+For Gmail, use `smtp.gmail.com`, port `465`, `SMTP_SECURE=true`, the full Gmail address, and a Google App Password. A copied App Password may contain display spaces; the API removes those spaces only for Gmail. After saving the variables, restart or redeploy the Render service. The public health response will show `"emailReminders": true` when all required SMTP variables are present.
+
+If the Render plan includes Shell access, run `npm run smtp:check`; this verifies the connection without sending an email. On a free service without Shell access, first check `https://YOUR-RENDER-SERVICE.onrender.com/api/health`, then perform one deliberate inbox test from the meeting People panel. The health flag proves configuration presence, not Gmail authentication or delivery.
 
 ## 8. Production verification
 
