@@ -3,7 +3,7 @@ import { NotificationMailer } from '../services/notification-mailer.js';
 
 const mailer = new NotificationMailer(loadConfig());
 if (!mailer.configured) {
-  console.error('SMTP is not configured. Add the SMTP variables to the private .env.local file.');
+  console.error('SMTP is not configured. Add the SMTP variables to the private environment.');
   process.exitCode = 1;
 } else {
   try { await mailer.verify(); console.log('SMTP credentials and connection were accepted. No email was sent.'); }

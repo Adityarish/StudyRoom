@@ -117,7 +117,8 @@ The bootstrap command hashes the password before storage.
 
 ## 7. Optional email reminders
 
-Add these only to the Render API service, never to Vercel:
+This project uses SMTP only. Add these values only to the Render API service,
+never to Vercel:
 
 - `SMTP_HOST`
 - `SMTP_PORT`
@@ -126,9 +127,25 @@ Add these only to the Render API service, never to Vercel:
 - `SMTP_PASS`
 - `SMTP_FROM` (optional)
 
-For Gmail, use `smtp.gmail.com`, port `465`, `SMTP_SECURE=true`, the full Gmail address, and a Google App Password. A copied App Password may contain display spaces; the API removes those spaces only for Gmail. After saving the variables, restart or redeploy the Render service. The public health response will show `"emailReminders": true` when all required SMTP variables are present.
+For Gmail, use either of these matching configurations:
 
-If the Render plan includes Shell access, run `npm run smtp:check`; this verifies the connection without sending an email. On a free service without Shell access, first check `https://YOUR-RENDER-SERVICE.onrender.com/api/health`, then perform one deliberate inbox test from the meeting People panel. The health flag proves configuration presence, not Gmail authentication or delivery.
+- Port `465` with `SMTP_SECURE=true`
+- Port `587` with `SMTP_SECURE=false`
+
+Use `smtp.gmail.com`, your full Gmail address as `SMTP_USER`, and a Google App
+Password as `SMTP_PASS`. A copied App Password may contain display spaces; the
+API removes those spaces only for Gmail.
+
+Render free web services block outbound SMTP ports 25, 465, and 587. Changing
+between 465 and 587 therefore does not enable Gmail SMTP on a free service. Use
+a paid Render web-service instance for SMTP delivery.
+
+After saving the variables, redeploy. The API checks SMTP during startup.
+`/api/health` should report `"emailProvider":"smtp"` and
+`"emailStatus":"ready"`. Run `npm run smtp:check` where Shell access is
+available; it verifies the connection without sending an email. Then perform
+one deliberate inbox test from the meeting People panel. Render logs record
+`Email reminder sent` only after Gmail accepts the message.
 
 ## 8. Production verification
 

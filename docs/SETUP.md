@@ -57,6 +57,9 @@ The join is transactional: a meeting session is not created unless its contact f
 
 Participants may enter an email on the pre-join screen. The address remains on the API/database side and is never returned to other participants. If that participant disconnects, active meeting members can open **Participants** and press **Notify**. Reminders are limited to one email per target every 10 minutes.
 
+Render free web services block Gmail SMTP ports 465 and 587. Use a paid Render
+web-service instance when deploying this SMTP-only configuration.
+
 For Gmail, enable 2-Step Verification, create a Google App Password, and place the SMTP values only in the ignored root `.env.local` file. Do not use or share the normal Gmail password. Verify the connection without sending an email:
 
 ```bash

@@ -9,7 +9,7 @@ import { assertRoomJoinable } from '../services/room-policy.js';
 import { randomToken, tokenHash, verifyPassword } from '../security/crypto.js';
 import { guestAuth } from '../middleware/guest-auth.js';
 import type { Config } from '../config.js';
-import type { NotificationMailer } from '../services/notification-mailer.js';
+import { emailErrorCode, type NotificationMailer } from '../services/notification-mailer.js';
 import { prepareWhatsAppInvitations } from '../services/whatsapp-click-to-chat.js';
 import { normalizeGuestContact } from '../services/guest-contact.js';
 import { resolveGuestProfile } from '../services/guest-profile.js';
@@ -131,8 +131,10 @@ export function publicRoutes(db: Database, livekit: LiveKitService, mailer: Noti
     finally { client.release(); }
 
     try {
-      await mailer.sendReminder({ to: target.email, targetName: target.display_name, requesterName: guest.displayName, roomName: target.room_name, roomUrl: `${config.WEB_ORIGIN}/room/${target.public_room_id}` });
-    } catch {
+      const delivery = await mailer.sendReminder({ to: target.email, targetName: target.display_name, requesterName: guest.displayName, roomName: target.room_name, roomUrl: `${config.WEB_ORIGIN}/room/${target.public_room_id}` });
+      console.log(`Email reminder sent; provider=${mailer.provider} notificationId=${notificationId} messageId=${delivery.messageId ?? 'unavailable'}.`);
+    } catch (error) {
+      console.error(`Email reminder failed; provider=${mailer.provider} notificationId=${notificationId} code=${emailErrorCode(error)}.`);
       await db.query('DELETE FROM participant_notifications WHERE id=$1', [notificationId]).catch(() => {});
       throw new HttpError(502, 'EMAIL_DELIVERY_FAILED', 'The reminder email could not be delivered. Try again later.');
     }
