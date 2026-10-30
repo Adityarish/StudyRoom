@@ -234,3 +234,98 @@ body{-webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility}::sele
   .panel-controls button{width:31px;height:31px}
   .settings-popover{inset:auto 6px 74px}
 }
+
+/* Fluid viewport pass: preserve alignment from 320px phones to wide displays. */
+html,body,#root{width:100%;max-width:100%;min-height:100%;overflow-x:clip}
+.auth-page,.prejoin-page,.admin-shell,.meeting-page,.meeting-loading,.loading-page{min-height:100vh;min-height:100dvh}
+.admin-shell{grid-template-columns:240px minmax(0,1fr)}
+.admin-main,.meeting-stage,.video-layout,.meeting-panel{min-width:0}
+.room-row:not(.room-head){transition:background-color .18s ease,border-color .18s ease,box-shadow .18s ease}
+.room-row:not(.room-head):hover{background:#f5faf7;color:var(--ink)}
+.room-row:not(.room-head):hover .room-identity b{color:var(--ink)}
+.room-row:not(.room-head):hover>span{color:#4f625a}
+[data-admin-theme=dark] .room-row:not(.room-head):hover{background:#1b2b25;color:#edf6f2}
+[data-admin-theme=dark] .room-row:not(.room-head):hover .room-identity b{color:#fff}
+[data-admin-theme=dark] .room-row:not(.room-head):hover>span{color:#c3d2cc}
+
+@media(min-width:1600px){
+  .hero{width:min(100%,1440px)}
+  .admin-main{padding-left:clamp(60px,6vw,96px);padding-right:clamp(60px,6vw,96px)}
+  .prejoin-shell{grid-template-columns:minmax(0,1.35fr) minmax(460px,.65fr)}
+  .camera-preview{max-height:min(620px,68dvh)}
+}
+
+@media(max-width:1000px){
+  .admin-shell{grid-template-columns:210px minmax(0,1fr)}
+  .admin-sidebar{padding-left:16px;padding-right:16px}
+  .stats{grid-template-columns:repeat(2,minmax(0,1fr))}
+}
+
+@media(max-width:760px){
+  .prejoin-page>header{height:64px;padding-left:clamp(14px,4vw,24px);padding-right:clamp(14px,4vw,24px)}
+  .prejoin-shell{min-height:calc(100dvh - 64px)}
+  .preview-pane{padding-left:clamp(16px,5vw,30px);padding-right:clamp(16px,5vw,30px)}
+  .identity-pane{padding-left:clamp(16px,5vw,30px);padding-right:clamp(16px,5vw,30px)}
+  .admin-shell{display:block}
+  .admin-main{width:100%;padding:28px clamp(14px,4vw,24px) 48px}
+  .admin-main>header{align-items:center}
+  .admin-main h1{font-size:clamp(27px,8vw,34px)}
+  .panel-heading{padding-left:18px;padding-right:18px}
+  .meeting-header{padding-left:clamp(10px,3vw,16px);padding-right:clamp(10px,3vw,16px)}
+  .meeting-stage{min-height:0}
+  .meeting-panel{width:min(100vw,420px)}
+}
+
+@media(max-width:560px){
+  .landing-nav .nav-links>a:not(.nav-admin){display:none}
+  .join-box{width:100%;flex-direction:column;padding:7px}
+  .join-box .button{width:100%;margin-top:5px}
+  .hero{padding-top:44px;padding-bottom:58px}
+  .hero-copy>p{font-size:15px}
+  .trust-row{flex-wrap:wrap}
+  .section{padding-left:18px;padding-right:18px}
+  .steps-card{padding-left:22px;padding-right:22px}
+  .cta{margin-left:14px;margin-right:14px;padding:34px 24px}
+  .cta h2{font-size:clamp(30px,9vw,38px)}
+  .device-row{grid-template-columns:1fr}
+  .camera-preview{aspect-ratio:4/3;min-height:0}
+  .identity-heading h2{font-size:clamp(25px,8vw,30px)}
+  .field-label .field-counter{top:41px}
+  .stats{grid-template-columns:repeat(2,minmax(0,1fr));margin-top:24px}
+  .stats article{padding:13px;gap:10px}
+  .stats article>span{width:36px;height:36px;flex:0 0 auto}
+  .stats b{font-size:20px}
+  .rooms-panel{border-radius:16px}
+  .room-table{padding:9px}
+  .room-row:not(.room-head){padding:14px;gap:12px 14px}
+  .room-invite-actions>*{flex:1 1 140px;justify-content:center}
+  .row-actions button{width:38px!important;height:38px!important}
+  .room-modal,.whatsapp-modal{max-height:calc(100dvh - env(safe-area-inset-top));}
+  .participant-drawer{width:100%;height:100dvh;max-height:100dvh}
+}
+
+@media(max-width:360px){
+  body{min-width:0}
+  .logo{font-size:17px}
+  .hero h1{font-size:36px;letter-spacing:-2.5px}
+  .hero-proof{display:none}
+  .avatar-grid{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .stats{grid-template-columns:1fr}
+  .admin-main{padding-left:10px;padding-right:10px}
+  .admin-main>header{align-items:flex-start}
+  .room-row:not(.room-head){grid-template-columns:1fr}
+  .room-row:not(.room-head)>*{grid-column:1!important}
+}
+
+@media(max-height:620px) and (orientation:landscape){
+  .prejoin-page>header{position:relative}
+  .prejoin-shell{min-height:auto}
+  .preview-pane{padding-top:22px;padding-bottom:22px}
+  .camera-preview{min-height:240px;max-height:none}
+  .identity-pane{max-height:none}
+  .meeting-header{height:54px}
+  .meeting-toolbar{min-height:60px;padding-top:5px;padding-bottom:max(5px,env(safe-area-inset-bottom))}
+  .control{padding-top:5px;padding-bottom:5px}
+  .control span{display:none}
+  .settings-popover{max-height:calc(100dvh - 72px)}
+}

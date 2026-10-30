@@ -10,6 +10,7 @@
     "start": "node dist/server.js",
     "test": "vitest run",
     "db:migrate": "tsx src/cli/migrate.ts",
+    "supabase:check": "tsx src/cli/check-supabase.ts",
     "admin:bootstrap": "tsx src/cli/bootstrap-admin.ts",
     "livekit:check": "tsx src/cli/check-livekit.ts",
     "smtp:check": "tsx src/cli/check-smtp.ts"

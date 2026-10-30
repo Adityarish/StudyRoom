@@ -4,14 +4,14 @@ StudyRoom has four production components:
 
 - **Vercel** serves the Vite/React app from `apps/web/dist`.
 - **Render** runs the long-lived Express API and its `/ws` WebSocket endpoint.
-- **Render Postgres** stores rooms, administrator sessions, guest sessions, and invitation records.
+- **Supabase Postgres** stores rooms, administrator sessions, guest sessions, and invitation records.
 - **LiveKit Cloud** provides browser-reachable WebRTC signaling and media over HTTPS/WSS.
 
 The checked-in `vercel.json` and `render.yaml` are configured for this split. Never put database, LiveKit secret, SMTP, or administrator credentials in Vercel variables prefixed with `VITE_`; every `VITE_` value is public browser code.
 
 ## 1. Put the project in Git
 
-Vercel and Render can both deploy from the same GitHub repository. This checkout does not currently include Git metadata, so create or connect a private repository before using the dashboard flows:
+Vercel and Render can both deploy from the same GitHub repository. This checkout is already connected to `origin`; verify the remote points to the intended private repository before deploying. For a new checkout, the equivalent setup is:
 
 ```bash
 git init
@@ -34,27 +34,46 @@ Create a LiveKit Cloud project and keep these three values ready for Render:
 
 The browser receives only a short-lived participant token and the public WSS URL. It must never receive the API secret.
 
-## 3. Deploy the API and database on Render
+## 3. Create and secure the Supabase database
+
+1. Create a Supabase project and save its database password in a password manager.
+2. In the project dashboard, select **Connect** and copy the **Session pooler** connection string. Render is a persistent, IPv4-hosted backend, so the session pooler is the most compatible choice. Replace the password placeholder with the URL-encoded database password.
+3. Keep this connection string server-only. StudyRoom does not need a Supabase URL, publishable key, anon key, or service-role key because the React client never talks directly to the database.
+4. The checked-in migration `006_supabase_privacy.sql` enables RLS and revokes `anon`/`authenticated` access to every StudyRoom table. Do not add public policies for `guest_sessions`; it contains private email and WhatsApp data.
+
+Use these API environment values:
+
+- `DATABASE_URL`: the Supabase Session pooler connection string
+- `MIGRATION_DATABASE_URL`: a Direct connection string when your runtime supports IPv6, otherwise the same Session pooler string
+- `DATABASE_SSL=true`
+- `DATABASE_POOL_MAX=10`
+
+After the first migration, `guest_sessions.email`, `guest_sessions.whatsapp_number`, and `guest_sessions.whatsapp_consent` hold the optional contact details submitted during join. The API returns only capability flags to meeting participants, never either contact value.
+
+## 4. Deploy the API on Render
 
 1. In Render, choose **New > Blueprint** and connect the repository.
-2. Render detects the root `render.yaml` and creates `studyroom-api` plus `studyroom-db` in Singapore.
+2. Render detects the root `render.yaml` and creates `studyroom-api` in Singapore.
 3. Supply the prompted values:
    - `WEB_ORIGIN`: the exact final Vercel production origin, for example `https://studyroom-example.vercel.app` (you can temporarily enter the expected Vercel project URL and correct it after the first Vercel deploy).
+   - `DATABASE_URL`
+   - `MIGRATION_DATABASE_URL`
    - `LIVEKIT_URL`
    - `LIVEKIT_API_KEY`
    - `LIVEKIT_API_SECRET`
 4. Deploy the Blueprint. The API build compiles the shared package and API; startup applies every unapplied migration before starting Express.
 5. Confirm `https://YOUR-RENDER-SERVICE.onrender.com/api/health` returns HTTP 200 and JSON with `"status":"ok"`.
+6. In a private Render Shell, run `npm run supabase:check`. It verifies the connection, contact columns, and RLS without printing credentials or guest data.
 
 The Blueprint intentionally uses one API instance because StudyRoom's WebSocket hub is process-local. Do not scale beyond one instance until realtime fan-out is backed by Redis, NATS, or another shared pub/sub service.
 
-### Free Render limits
+### Free service limits
 
-The Blueprint starts with Render's `free` web and Postgres plans so it can be tested without an initial charge. This is not a durable production configuration: the free web service can spin down, and the free Postgres database expires after 30 days and has no backups. Upgrade both plans before using the app for important or long-lived rooms.
+The Blueprint starts with Render's `free` web plan so it can be tested without an initial charge. The service can spin down when idle. Review Supabase project limits, backups, and pause behavior separately before using the app for important or long-lived rooms.
 
 If you use a paid Render web plan, you can move `npm run db:migrate` from `startCommand` to a Render pre-deploy command. The current idempotent startup command also works on the free plan.
 
-## 4. Deploy the frontend on Vercel
+## 5. Deploy the frontend on Vercel
 
 1. In Vercel, choose **Add New > Project** and import the same repository.
 2. Keep the repository root as the Vercel Root Directory. `vercel.json` supplies the Vite build and `apps/web/dist` output path.
@@ -65,7 +84,7 @@ If you use a paid Render web plan, you can move `npm run db:migrate` from `start
 
 `VITE_API_URL` is compiled into the frontend, so changing it requires a new Vercel deployment.
 
-## 5. Create the first administrator
+## 6. Create the first administrator
 
 Open a private Render Shell for `studyroom-api` and run the bootstrap command with temporary environment variables. Do not commit or paste the password into source files:
 
@@ -77,7 +96,7 @@ npm run admin:bootstrap
 
 Remove any temporary dashboard variables after the command finishes. The bootstrap command hashes the password before storage.
 
-## 6. Optional email reminders
+## 7. Optional email reminders
 
 Add these only to the Render API service, never to Vercel:
 
@@ -90,17 +109,19 @@ Add these only to the Render API service, never to Vercel:
 
 For Gmail, use `smtp.gmail.com`, port `465`, `SMTP_SECURE=true`, the full Gmail address, and a Google App Password. Verify connectivity from a Render Shell with `npm run smtp:check`; this checks the connection without sending an email.
 
-## 7. Production verification
+## 8. Production verification
 
 Verify each boundary separately:
 
 1. Render `/api/health` returns 200.
-2. Vercel `/`, `/admin/login`, and a direct `/room/...` refresh return the React app rather than 404.
-3. Administrator login works, a room can be created, and its invitation opens on the Vercel domain.
-4. Two separate browser profiles can join the same room and see/hear each other through LiveKit.
-5. Chat updates over `wss://YOUR-RENDER-SERVICE.onrender.com/ws`.
-6. Camera, microphone, and screen-share permissions work on HTTPS.
-7. If SMTP is configured, run the non-sending check first and then perform a deliberate inbox test.
+2. `npm run supabase:check` succeeds from Render and Supabase Table Editor shows the migrated tables with RLS enabled.
+3. Vercel `/`, `/admin/login`, and a direct `/room/...` refresh return the React app rather than 404.
+4. Administrator login works, a room can be created, and its invitation opens on the Vercel domain.
+5. Join once with an email and opted-in WhatsApp number; verify one `guest_sessions` row contains the normalized values. Do not expose this verification screenshot publicly.
+6. Two separate browser profiles can join the same room and see/hear each other through LiveKit.
+7. Chat updates over `wss://YOUR-RENDER-SERVICE.onrender.com/ws`.
+8. Camera, microphone, and screen-share permissions work on HTTPS.
+9. If SMTP is configured, run the non-sending check first and then perform a deliberate inbox test.
 
 A successful build or a green platform deployment does not prove database access, WebSocket chat, LiveKit media, or SMTP delivery. Keep these checks in the release routine.
 
@@ -113,5 +134,5 @@ For the most reliable administrator session behavior, put the frontend and API u
 - Vercel and Render terminate public TLS on port 443.
 - Render must preserve WebSocket upgrades for `/ws`; its web service does this automatically.
 - LiveKit Cloud provides WSS and media networking. If LiveKit is self-hosted instead, expose the exact TCP/UDP/TURN ports from its deployment configuration.
-- Do not expose PostgreSQL publicly. The Blueprint's empty `ipAllowList` keeps it on Render's private network.
+- Keep Supabase connection strings only in Render's secret environment. Never add them to Vercel or a `VITE_` variable.
 - Schedule `SELECT cleanup_studyroom_data();` periodically and define a retention policy for old guest sessions.

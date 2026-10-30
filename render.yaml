@@ -15,11 +15,13 @@ services:
       - key: WEB_ORIGIN
         sync: false
       - key: DATABASE_URL
-        fromDatabase:
-          name: studyroom-db
-          property: connectionString
+        sync: false
+      - key: MIGRATION_DATABASE_URL
+        sync: false
       - key: DATABASE_SSL
-        value: "false"
+        value: "true"
+      - key: DATABASE_POOL_MAX
+        value: "10"
       - key: SESSION_SECRET
         generateValue: true
       - key: LIVEKIT_URL
@@ -30,11 +32,3 @@ services:
         sync: false
       - key: TRUST_PROXY
         value: "true"
-
-databases:
-  - name: studyroom-db
-    databaseName: studyroom
-    user: studyroom
-    region: singapore
-    plan: free
-    ipAllowList: []

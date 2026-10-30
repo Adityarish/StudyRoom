@@ -3,8 +3,15 @@ import type { Config } from './config.js';
 
 const { Pool } = pg;
 export type Database = pg.Pool;
-export function createPool(config: Config) {
-  return new Pool({ connectionString: config.DATABASE_URL, ssl: config.DATABASE_SSL ? { rejectUnauthorized: false } : false, max: 15, idleTimeoutMillis: 30_000 });
+export function createPool(config: Config, connectionString = config.DATABASE_URL) {
+  return new Pool({
+    connectionString,
+    ssl: config.DATABASE_SSL ? { rejectUnauthorized: false } : false,
+    max: config.DATABASE_POOL_MAX ?? 10,
+    idleTimeoutMillis: 30_000,
+    connectionTimeoutMillis: 10_000,
+    allowExitOnIdle: config.NODE_ENV === 'test',
+  });
 }
 
 export function mapRoom(row: Record<string, unknown>) {

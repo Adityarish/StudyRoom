@@ -37,7 +37,7 @@ const optionalWhatsAppNumberSchema = z.preprocess(
 
 const optionalEmailSchema = z.preprocess(
   value => typeof value === 'string' && value.trim() === '' ? undefined : value,
-  z.string().trim().email().max(320).optional(),
+  z.string().trim().email().max(320).transform(value => value.toLowerCase()).optional(),
 ).optional();
 
 export const guestJoinSchema = z.object({
@@ -52,6 +52,7 @@ export const guestJoinSchema = z.object({
 }).superRefine((value, context) => {
   if (value.whatsappNumber && value.whatsappConsent !== true) context.addIssue({ code: z.ZodIssueCode.custom, path: ['whatsappConsent'], message: 'Confirm WhatsApp invitation consent' });
 });
+export type GuestJoinInput = z.infer<typeof guestJoinSchema>;
 
 export const roomInputSchema = z.object({
   name: z.string().trim().min(3).max(100),

@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { guestJoinSchema, normalizeIndianWhatsAppNumber, whatsappInvitationSelectionSchema } from '@studyroom/shared';
+import { guestJoinSchema, whatsappInvitationSelectionSchema } from '@studyroom/shared';
 import type { Database } from '../db.js';
 import { mapRoom } from '../db.js';
 import type { LiveKitService } from '../services/livekit.js';
@@ -11,6 +11,7 @@ import { guestAuth } from '../middleware/guest-auth.js';
 import type { Config } from '../config.js';
 import type { NotificationMailer } from '../services/notification-mailer.js';
 import { prepareWhatsAppInvitations } from '../services/whatsapp-click-to-chat.js';
+import { normalizeGuestContact } from '../services/guest-contact.js';
 
 const roomSelect = `SELECT r.*, (SELECT count(*) FROM guest_sessions g WHERE g.room_id=r.id AND g.left_at IS NULL AND g.approval_status='approved' AND g.last_seen_at > now()-interval '5 minutes')::int AS active_participants FROM study_rooms r`;
 
@@ -28,8 +29,8 @@ export function publicRoutes(db: Database, livekit: LiveKitService, mailer: Noti
       assertRoomJoinable({ ...room, active_participants: Math.max(0, Number(room.active_participants) - replacedActive) }, new Date(), Boolean(currentClient?.rowCount));
       if (room.room_password_hash) { if (!input.roomPassword || !(await verifyPassword(input.roomPassword, room.room_password_hash))) throw new HttpError(403, 'ROOM_PASSWORD_INVALID', 'The room password is incorrect.'); }
       const identity = `guest_${randomToken(18)}`; const sessionToken = randomToken(); const waitingToken = randomToken(); const approval = room.waiting_room_enabled ? 'pending' : 'approved';
-      const whatsappNumber = input.whatsappNumber ? normalizeIndianWhatsAppNumber(input.whatsappNumber) : null;
-      const session = await client.query(`INSERT INTO guest_sessions(room_id,guest_identity,display_name,avatar_id,presentation,client_id,email,whatsapp_number,whatsapp_consent,session_token_hash,waiting_token_hash,approval_status) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) RETURNING id`, [room.id, identity, input.displayName, input.avatarId, input.presentation ?? null, input.clientId, input.email ?? null, whatsappNumber, Boolean(whatsappNumber && input.whatsappConsent), tokenHash(sessionToken), tokenHash(waitingToken), approval]);
+      const contact = normalizeGuestContact(input);
+      const session = await client.query(`INSERT INTO guest_sessions(room_id,guest_identity,display_name,avatar_id,presentation,client_id,email,whatsapp_number,whatsapp_consent,session_token_hash,waiting_token_hash,approval_status) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) RETURNING id`, [room.id, identity, input.displayName, input.avatarId, input.presentation ?? null, input.clientId, contact.email, contact.whatsappNumber, contact.whatsappConsent, tokenHash(sessionToken), tokenHash(waitingToken), approval]);
       await client.query('COMMIT');
       await Promise.all(replacedIdentities.map(previousIdentity => livekit.remove(room.livekit_room_name, previousIdentity).catch(() => {})));
       if (approval === 'pending') return res.status(202).json({ status: 'waiting', requestId: session.rows[0].id, requestToken: waitingToken });

@@ -15,6 +15,7 @@
     "test": "npm run test -w @studyroom/api && npm run test -w @studyroom/web",
     "test:e2e": "npm run test:e2e -w @studyroom/web",
     "db:migrate": "npm run db:migrate -w @studyroom/api",
+    "supabase:check": "npm run supabase:check -w @studyroom/api",
     "admin:bootstrap": "npm run admin:bootstrap -w @studyroom/api",
     "livekit:check": "npm run livekit:check -w @studyroom/api",
     "smtp:check": "npm run smtp:check -w @studyroom/api",

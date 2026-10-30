@@ -4,7 +4,10 @@ import { fileURLToPath } from 'node:url';
 import { loadConfig } from '../config.js';
 import { createPool } from '../db.js';
 
-const config = loadConfig(); const pool = createPool(config);
+const config = loadConfig();
+// Supabase recommends a direct or session-pooler connection for migrations,
+// while the API may use a separate pooled runtime URL.
+const pool = createPool(config, config.MIGRATION_DATABASE_URL ?? config.DATABASE_URL);
 const here = dirname(fileURLToPath(import.meta.url)); const migrationDir = resolve(here, '../../../../database/migrations');
 try {
   await pool.query('CREATE TABLE IF NOT EXISTS schema_migrations (name text PRIMARY KEY, applied_at timestamptz NOT NULL DEFAULT now())');
