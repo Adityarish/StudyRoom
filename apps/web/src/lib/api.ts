@@ -40,6 +40,7 @@ export const api = {
   getRoom: (id: string) => request<{ room: PublicRoom }>(`/api/rooms/${encodeURIComponent(id)}`),
   joinRoom: (id: string, body: unknown) => request<JoinResponse | WaitingResponse>(`/api/rooms/${encodeURIComponent(id)}/join`, { method: 'POST', body: JSON.stringify(body) }),
   waitingStatus: (id: string, requestId: string, token: string) => request<JoinResponse | WaitingResponse>(`/api/rooms/${encodeURIComponent(id)}/waiting/${encodeURIComponent(requestId)}?token=${encodeURIComponent(token)}`),
+  resumeRoom: (id: string, sessionId: string, token: string) => request<JoinResponse>(`/api/rooms/${encodeURIComponent(id)}/resume`, { method: 'POST', headers: { authorization: `Bearer ${token}` }, body: JSON.stringify({ sessionId }) }),
   leaveRoom: (id: string, sessionId: string, token: string) => request(`/api/rooms/${encodeURIComponent(id)}/leave`, { method: 'POST', headers: { authorization: `Bearer ${token}` }, body: JSON.stringify({ sessionId }) }),
   heartbeat: (id: string, sessionId: string, token: string) => request(`/api/rooms/${encodeURIComponent(id)}/heartbeat`, { method: 'POST', headers: { authorization: `Bearer ${token}` }, body: JSON.stringify({ sessionId }) }),
   roomMembers: (id: string, sessionId: string, token: string) => request<{ members: RoomMember[] }>(`/api/rooms/${encodeURIComponent(id)}/members`, { method: 'POST', headers: { authorization: `Bearer ${token}` }, body: JSON.stringify({ sessionId }) }),

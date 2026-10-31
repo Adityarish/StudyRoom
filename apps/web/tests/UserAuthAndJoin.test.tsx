@@ -166,6 +166,7 @@ describe('User Supabase Authentication and Onboarding Flow', () => {
       sessionId: 'sess-1',
       sessionToken: 'token-1',
       identity: 'guest_1',
+      joinedAt: '2026-10-31T08:00:00.000Z',
       room: {
         publicRoomId: 'room-1',
         name: 'Biology 101',

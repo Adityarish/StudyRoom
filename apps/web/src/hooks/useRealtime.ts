@@ -5,6 +5,7 @@ import { REALTIME_URL } from '../lib/api';
 export function useRealtime(roomId: string, sessionId: string, sessionToken: string) {
   const wsRef = useRef<WebSocket | null>(null); const [messages, setMessages] = useState<RealtimeServerMessage[]>([]); const [participants, setParticipants] = useState<NonNullable<RealtimeServerMessage['participants']>>([]); const [connected, setConnected] = useState(false); const [unread, setUnread] = useState(0);
   useEffect(() => {
+    if (!roomId || !sessionId || !sessionToken) { setConnected(false); setParticipants([]); return; }
     const url = new URL(REALTIME_URL); const protocol = url.protocol === 'https:' ? 'wss:' : 'ws:'; let active = true; let retryTimer: number | undefined; let attempts = 0;
     const connect = () => {
       if (!active) return;

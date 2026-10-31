@@ -14,7 +14,7 @@ import { prepareWhatsAppInvitations } from '../services/whatsapp-click-to-chat.j
 import { normalizeGuestContact } from '../services/guest-contact.js';
 import { resolveGuestProfile } from '../services/guest-profile.js';
 
-const roomSelect = `SELECT r.*, (SELECT count(*) FROM guest_sessions g WHERE g.room_id=r.id AND g.left_at IS NULL AND g.approval_status='approved' AND g.last_seen_at > now()-interval '5 minutes')::int AS active_participants FROM study_rooms r`;
+const roomSelect = `SELECT r.*, (SELECT count(DISTINCT g.profile_id) FROM guest_sessions g WHERE g.room_id=r.id AND g.left_at IS NULL AND g.approval_status='approved' AND g.last_seen_at > now()-interval '5 minutes')::int AS active_participants FROM study_rooms r`;
 
 export function publicRoutes(db: Database, livekit: LiveKitService, mailer: NotificationMailer, config: Config) {
   const router = Router();
@@ -25,14 +25,30 @@ export function publicRoutes(db: Database, livekit: LiveKitService, mailer: Noti
       if (room.room_password_hash) { if (!input.roomPassword || !(await verifyPassword(input.roomPassword, room.room_password_hash))) throw new HttpError(403, 'ROOM_PASSWORD_INVALID', 'The room password is incorrect.'); }
       const contact = normalizeGuestContact(input);
       const profileId = await resolveGuestProfile(client, { clientId: input.clientId, displayName: input.displayName, avatarId: input.avatarId, presentation: input.presentation, ...contact });
-      assertRoomJoinable(room, new Date());
-      const identity = `guest_${randomToken(18)}`; const sessionToken = randomToken(); const waitingToken = randomToken(); const approval = room.waiting_room_enabled ? 'pending' : 'approved';
-      const session = await client.query(`INSERT INTO guest_sessions(room_id,profile_id,guest_identity,display_name,avatar_id,presentation,client_id,email,whatsapp_number,whatsapp_consent,session_token_hash,waiting_token_hash,approval_status) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) RETURNING id`, [room.id, profileId, identity, input.displayName, input.avatarId, input.presentation ?? null, input.clientId, contact.email, contact.whatsappNumber, contact.whatsappConsent, tokenHash(sessionToken), tokenHash(waitingToken), approval]);
+      const previous = await client.query<{ guest_identity: string; approval_status: string }>(`SELECT guest_identity,approval_status FROM guest_sessions WHERE room_id=$1 AND profile_id=$2 AND left_at IS NULL FOR UPDATE`, [room.id, profileId]);
+      const replacingApprovedSession = previous.rows.some(session => session.approval_status === 'approved');
+      assertRoomJoinable(room, new Date(), replacingApprovedSession);
+      await client.query(`UPDATE guest_sessions SET left_at=now(),last_seen_at=now() WHERE room_id=$1 AND profile_id=$2 AND left_at IS NULL`, [room.id, profileId]);
+      const identity = `guest_${randomToken(18)}`; const sessionToken = randomToken(); const waitingToken = randomToken(); const approval = room.waiting_room_enabled && !replacingApprovedSession ? 'pending' : 'approved';
+      const session = await client.query(`INSERT INTO guest_sessions(room_id,profile_id,guest_identity,display_name,avatar_id,presentation,client_id,email,whatsapp_number,whatsapp_consent,session_token_hash,waiting_token_hash,approval_status) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) RETURNING id,joined_at`, [room.id, profileId, identity, input.displayName, input.avatarId, input.presentation ?? null, input.clientId, contact.email, contact.whatsappNumber, contact.whatsappConsent, tokenHash(sessionToken), tokenHash(waitingToken), approval]);
       await client.query('COMMIT');
+      await Promise.allSettled(previous.rows.map(oldSession => livekit.remove(room.livekit_room_name, oldSession.guest_identity)));
       if (approval === 'pending') return res.status(202).json({ status: 'waiting', requestId: session.rows[0].id, requestToken: waitingToken });
       const token = await livekit.guestToken({ roomName: room.livekit_room_name, identity, displayName: input.displayName, avatarId: input.avatarId, screenSharingEnabled: room.screen_sharing_enabled });
-      return res.status(201).json({ status: 'joined', livekitUrl: livekit.publicUrl, token, sessionId: session.rows[0].id, sessionToken, identity, room: stripAdmin(mapRoom(room)) });
+      return res.status(201).json({ status: 'joined', livekitUrl: livekit.publicUrl, token, sessionId: session.rows[0].id, sessionToken, identity, joinedAt: new Date(session.rows[0].joined_at).toISOString(), room: stripAdmin(mapRoom(room)) });
     } catch (error) { await client.query('ROLLBACK').catch(() => {}); throw error; } finally { client.release(); }
+  }));
+  router.post('/rooms/:roomId/resume', guestAuth(db), asyncHandler(async (req, res) => {
+    const guest = req.guest; if (!guest || guest.publicRoomId !== req.params.roomId) throw new HttpError(403, 'ROOM_MISMATCH', 'This session belongs to another room.');
+    const result = await db.query(`SELECT r.*,session.joined_at AS session_joined_at,
+      (SELECT count(DISTINCT active.profile_id) FROM guest_sessions active WHERE active.room_id=r.id AND active.left_at IS NULL AND active.approval_status='approved' AND active.last_seen_at>now()-interval '5 minutes')::int AS active_participants
+      FROM study_rooms r JOIN guest_sessions session ON session.room_id=r.id WHERE r.id=$1 AND session.id=$2`, [guest.roomId, guest.id]);
+    const row = result.rows[0]; if (!row) throw new HttpError(404, 'ROOM_NOT_FOUND', 'Room not found.');
+    assertRoomJoinable(row, new Date(), true);
+    await db.query('UPDATE guest_sessions SET last_seen_at=now() WHERE id=$1', [guest.id]);
+    const token = await livekit.guestToken({ roomName: row.livekit_room_name, identity: guest.guestIdentity, displayName: guest.displayName, avatarId: guest.avatarId, screenSharingEnabled: row.screen_sharing_enabled });
+    const sessionToken = req.get('authorization')!.replace(/^Bearer\s+/i, '');
+    res.json({ status: 'joined', livekitUrl: livekit.publicUrl, token, sessionId: guest.id, sessionToken, identity: guest.guestIdentity, joinedAt: new Date(row.session_joined_at).toISOString(), room: stripAdmin(mapRoom(row)) });
   }));
   router.post('/rooms/:roomId/members', guestAuth(db), asyncHandler(async (req, res) => {
     const guest = req.guest; if (!guest || guest.publicRoomId !== req.params.roomId) throw new HttpError(403, 'ROOM_MISMATCH', 'This session belongs to another room.');
@@ -49,13 +65,7 @@ export function publicRoutes(db: Database, livekit: LiveKitService, mailer: Noti
       FROM guest_sessions session
       JOIN guest_profiles profile ON profile.id=session.profile_id
       WHERE session.room_id=$1 AND session.approval_status='approved'
-      GROUP BY (
-        CASE
-          WHEN session.left_at IS NULL AND session.last_seen_at > now() - interval '5 minutes'
-          THEN session.id
-          ELSE session.profile_id
-        END
-      ), session.profile_id, profile.email, profile.whatsapp_number, profile.whatsapp_consent
+      GROUP BY session.profile_id, profile.email, profile.whatsapp_number, profile.whatsapp_consent
     )
     SELECT latest.*,notification.sent_at AS last_notified_at
     FROM latest
@@ -73,7 +83,7 @@ export function publicRoutes(db: Database, livekit: LiveKitService, mailer: Noti
       const canReceiveReminder = mailer.configured && Boolean(member.email) && !isLive && member.profile_id !== guest.profileId;
       const coolingDown = Boolean(canReceiveReminder && lastNotifiedAt && now - new Date(lastNotifiedAt).getTime() < 600_000);
       const emailReminderStatus = canReceiveReminder ? (coolingDown ? 'cooldown' : 'available') : 'unavailable';
-      const isSelf = member.id === guest.id || (member.profile_id === guest.profileId && !isLive);
+      const isSelf = member.profile_id === guest.profileId;
       return { id: member.id, displayName: member.display_name, avatarId: member.avatar_id, identities, live: isLive, isSelf, lastNotifiedAt, canNotify: emailReminderStatus === 'available', emailReminderStatus, canInviteOnWhatsApp: Boolean(member.whatsapp_consent && member.whatsapp_number) && member.profile_id !== guest.profileId };
     }) });
   }));
@@ -147,10 +157,12 @@ export function publicRoutes(db: Database, livekit: LiveKitService, mailer: Noti
     }
     res.status(202).json({ message: `Reminder sent to ${target.display_name}.`, notifiedAt: new Date().toISOString() });
   }));
-  router.get('/rooms/:roomId/waiting/:requestId', asyncHandler(async (req, res) => { const token = String(req.query.token ?? ''); const result = await db.query(`SELECT r.*,g.waiting_token_hash,g.approval_status,g.guest_identity,g.display_name,g.avatar_id,(SELECT count(*) FROM guest_sessions active WHERE active.room_id=r.id AND active.left_at IS NULL AND active.approval_status='approved' AND active.last_seen_at>now()-interval '5 minutes')::int AS active_participants FROM study_rooms r JOIN guest_sessions g ON g.room_id=r.id WHERE r.public_room_id=$1 AND g.id=$2`, [req.params.roomId, req.params.requestId]); const row = result.rows[0]; if (!row || !token || tokenHash(token) !== row.waiting_token_hash) throw new HttpError(404, 'WAITING_REQUEST_NOT_FOUND', 'The waiting request is no longer available.'); if (row.approval_status === 'declined') throw new HttpError(403, 'WAITING_DECLINED', 'The room administrator declined this request.'); if (row.approval_status === 'pending') return res.status(202).json({ status: 'waiting', requestId: req.params.requestId, requestToken: token }); assertRoomJoinable(row, new Date(), true); const sessionToken = randomToken(); await db.query('UPDATE guest_sessions SET session_token_hash=$1, last_seen_at=now() WHERE id=$2', [tokenHash(sessionToken), req.params.requestId]); const lk = await livekit.guestToken({ roomName: row.livekit_room_name, identity: row.guest_identity, displayName: row.display_name, avatarId: row.avatar_id, screenSharingEnabled: row.screen_sharing_enabled }); return res.json({ status: 'joined', livekitUrl: livekit.publicUrl, token: lk, sessionId: req.params.requestId, sessionToken, identity: row.guest_identity, room: stripAdmin(mapRoom(row)) }); }));
+  router.get('/rooms/:roomId/waiting/:requestId', asyncHandler(async (req, res) => { const token = String(req.query.token ?? ''); const result = await db.query(`SELECT r.*,g.waiting_token_hash,g.approval_status,g.guest_identity,g.display_name,g.avatar_id,g.joined_at,(SELECT count(DISTINCT active.profile_id) FROM guest_sessions active WHERE active.room_id=r.id AND active.left_at IS NULL AND active.approval_status='approved' AND active.last_seen_at>now()-interval '5 minutes')::int AS active_participants FROM study_rooms r JOIN guest_sessions g ON g.room_id=r.id WHERE r.public_room_id=$1 AND g.id=$2`, [req.params.roomId, req.params.requestId]); const row = result.rows[0]; if (!row || !token || tokenHash(token) !== row.waiting_token_hash) throw new HttpError(404, 'WAITING_REQUEST_NOT_FOUND', 'The waiting request is no longer available.'); if (row.approval_status === 'declined') throw new HttpError(403, 'WAITING_DECLINED', 'The room administrator declined this request.'); if (row.approval_status === 'pending') return res.status(202).json({ status: 'waiting', requestId: req.params.requestId, requestToken: token }); assertRoomJoinable(row, new Date(), true); const sessionToken = randomToken(); await db.query('UPDATE guest_sessions SET session_token_hash=$1, last_seen_at=now() WHERE id=$2', [tokenHash(sessionToken), req.params.requestId]); const lk = await livekit.guestToken({ roomName: row.livekit_room_name, identity: row.guest_identity, displayName: row.display_name, avatarId: row.avatar_id, screenSharingEnabled: row.screen_sharing_enabled }); return res.json({ status: 'joined', livekitUrl: livekit.publicUrl, token: lk, sessionId: req.params.requestId, sessionToken, identity: row.guest_identity, joinedAt: new Date(row.joined_at).toISOString(), room: stripAdmin(mapRoom(row)) }); }));
   router.post('/rooms/:roomId/heartbeat', guestAuth(db), asyncHandler(async (req, res) => { const guest = req.guest; if (!guest || guest.publicRoomId !== req.params.roomId) throw new HttpError(403, 'ROOM_MISMATCH', 'This session belongs to another room.'); await db.query('UPDATE guest_sessions SET last_seen_at=now() WHERE id=$1', [guest.id]); res.status(204).end(); }));
   router.post('/rooms/:roomId/leave', guestAuth(db), asyncHandler(async (req, res) => { const guest = req.guest; if (!guest || guest.publicRoomId !== req.params.roomId) throw new HttpError(403, 'ROOM_MISMATCH', 'This session belongs to another room.'); await db.query('UPDATE guest_sessions SET left_at=COALESCE(left_at,now()), last_seen_at=now() WHERE id=$1', [guest.id]); res.status(204).end(); }));
-  router.post('/rooms/:roomId/leave-beacon', asyncHandler(async (req, res) => { const { sessionId, sessionToken } = req.body as { sessionId?: string; sessionToken?: string }; if (sessionId && sessionToken) await db.query(`UPDATE guest_sessions g SET left_at=COALESCE(g.left_at,now()) FROM study_rooms r WHERE g.room_id=r.id AND g.id=$1 AND g.session_token_hash=$2 AND r.public_room_id=$3`, [sessionId, tokenHash(sessionToken), req.params.roomId]); res.status(204).end(); }));
+  // Compatibility for already-cached clients. Page lifecycle events also fire
+  // during refresh, so they must never end a resumable participant session.
+  router.post('/rooms/:roomId/leave-beacon', (_req, res) => { res.status(204).end(); });
   return router;
 }
 function stripAdmin(room: ReturnType<typeof mapRoom>) { const { id: _id, createdAt: _createdAt, updatedAt: _updatedAt, closedAt: _closedAt, ...safe } = room; return safe; }

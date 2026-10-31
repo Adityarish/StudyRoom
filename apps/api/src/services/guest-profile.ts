@@ -70,6 +70,13 @@ export async function resolveGuestProfile(client: PoolClient, input: GuestProfil
     profileId = matches[0]!.id;
     const duplicateIds = matches.slice(1).map(row => row.id);
     if (duplicateIds.length) {
+      const mergingIds = [profileId, ...duplicateIds];
+      await client.query(`WITH ranked AS (
+        SELECT id,row_number() OVER (PARTITION BY room_id ORDER BY (approval_status='approved') DESC,last_seen_at DESC,joined_at DESC,id DESC) AS position
+        FROM guest_sessions WHERE profile_id=ANY($1::uuid[]) AND left_at IS NULL
+      )
+      UPDATE guest_sessions session SET left_at=now(),last_seen_at=now()
+      FROM ranked WHERE session.id=ranked.id AND ranked.position>1`, [mergingIds]);
       await client.query('UPDATE guest_sessions SET profile_id=$1 WHERE profile_id=ANY($2::uuid[])', [profileId, duplicateIds]);
       await client.query('UPDATE guest_profile_identifiers SET profile_id=$1 WHERE profile_id=ANY($2::uuid[])', [profileId, duplicateIds]);
       await client.query('DELETE FROM guest_profiles WHERE id=ANY($1::uuid[])', [duplicateIds]);

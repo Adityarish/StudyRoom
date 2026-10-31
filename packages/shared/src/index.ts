@@ -105,6 +105,7 @@ export interface JoinResponse {
   sessionId: string;
   sessionToken: string;
   identity: string;
+  joinedAt: string;
   room: PublicRoom;
 }
 

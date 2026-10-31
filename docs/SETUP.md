@@ -113,6 +113,7 @@ Browsers allow camera and microphone access on `localhost`. For another device, 
 3. Open the same invitation in a Chrome Incognito window as participant B. Use a different display name and join with camera and microphone off.
 4. Participant B should see participant A's remote video and both windows should show two participants. Send chat messages from both windows to verify the room-scoped realtime channel and compact avatars.
 5. To test the opposite direction, turn participant A's camera off before enabling participant B's camera. One physical camera may not be available to two browser contexts simultaneously.
+6. Refresh participant A's meeting page. It should reconnect as the same participant, keep the elapsed timer, and return to two visible participants without creating an offline duplicate.
 
 Keep one window muted, or use headphones, to prevent audio feedback. If the waiting room is enabled, approve the second participant from the admin dashboard before expecting the second meeting tile.
 

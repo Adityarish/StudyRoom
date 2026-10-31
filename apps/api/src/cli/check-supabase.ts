@@ -22,7 +22,15 @@ try {
   const unprotected = ['guest_sessions', 'guest_profiles', 'guest_profile_identifiers'].filter(table => !protectedTables.has(table));
   if (unprotected.length) throw new Error(`Guest contact privacy is incomplete: ${unprotected.join(', ')}. Run npm run db:migrate.`);
 
-  console.log('Supabase connection OK. Unique guest profiles, contact fields, and RLS protection are ready.');
+  const activeSessionIndex = await pool.query<{ present: boolean }>(`SELECT EXISTS (
+    SELECT 1 FROM pg_indexes WHERE schemaname='public' AND tablename='guest_sessions'
+      AND indexname='idx_guest_sessions_one_active_profile_per_room'
+  ) AS present`);
+  if (!activeSessionIndex.rows[0]?.present) throw new Error('Participant session integrity index is missing. Run npm run db:migrate.');
+  const duplicateActive = await pool.query(`SELECT 1 FROM guest_sessions WHERE left_at IS NULL GROUP BY room_id,profile_id HAVING count(*)>1 LIMIT 1`);
+  if (duplicateActive.rowCount) throw new Error('Duplicate active participant sessions remain. Run npm run db:migrate.');
+
+  console.log('Supabase connection OK. Unique profiles, one active room session per participant, contact fields, and RLS protection are ready.');
 } finally {
   await pool.end();
 }
