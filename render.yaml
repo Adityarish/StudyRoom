@@ -17,6 +17,10 @@ services:
         sync: false
       - key: MIGRATION_DATABASE_URL
         sync: false
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
       - key: DATABASE_SSL
         value: "true"
       - key: DATABASE_POOL_MAX

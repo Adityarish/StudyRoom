@@ -2,7 +2,7 @@
 
 ## Request boundaries
 
-The browser never receives PostgreSQL credentials, a LiveKit API secret, or an administrator password hash. The Vite application calls the Express API through a single configured origin. Express is the only database client and the only LiveKit token issuer.
+The browser never receives PostgreSQL credentials, a Supabase service-role key, a LiveKit API secret, or an administrator password hash. The Vite application uses the public Supabase client for user authentication and calls the Express API through a single configured origin. Express verifies the Supabase access token during join, remains the only database client, and is the only LiveKit token issuer.
 
 Guest flow:
 
@@ -28,6 +28,8 @@ Administrator flow:
 LiveKit carries WebRTC camera, microphone, and screen tracks. The client enables adaptive streaming, simulcast layers, and dynacast. Remote publication quality is raised for the active/pinned speaker and reduced for small tiles. Audio-only mode stops the local camera and unsubscribes remote video tracks.
 
 For larger calls, non-primary remote tiles step down from high to medium and then low layers as participant count grows. This keeps every participant subscribed while protecting the bandwidth needed for audio and the active speaker.
+
+Each remote camera tile has private viewer controls. A participant can change only that person's playback volume, mute them locally, hide/show their video, or pin them. These preferences stay in the current tab across refresh and are never broadcast to the room. Speaker view attaches remote audio in exactly one rendered tile to avoid duplicate playback.
 
 Chat, reactions, and hand raises use the API WebSocket at `/ws`, not guest-controlled LiveKit data packets. The first WebSocket frame authenticates the hashed guest session. The server supplies the sender identity, validates content, applies a per-connection burst limit, and broadcasts only within that room. Messages are ephemeral and are not replayed after a session.
 

@@ -5,7 +5,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { AuthProvider } from '../src/context/AuthContext';
 import { UserLoginPage } from '../src/pages/UserLoginPage';
 import { PreJoinPage } from '../src/pages/PreJoinPage';
-import { api } from '../src/lib/api';
+import { ApiRequestError, api } from '../src/lib/api';
 
 function createMockStorage() {
   const values = new Map<string, string>();
@@ -214,7 +214,8 @@ describe('User Supabase Authentication and Onboarding Flow', () => {
         expect.objectContaining({
           email: 'alex@studyroom.io',
           displayName: 'Alex Rivera',
-        })
+        }),
+        undefined,
       );
     });
   });
@@ -270,5 +271,17 @@ describe('User Supabase Authentication and Onboarding Flow', () => {
     // Type a new custom name
     await userEvent.type(nameInput, 'Dr. Taylor');
     expect(nameInput.value).toBe('Dr. Taylor');
+  });
+
+  it('returns a deleted guest to sign-up when the server rejects the old Supabase session', async () => {
+    localStorage.setItem('studyroom.auth.user', JSON.stringify({ id: 'deleted-user', email: 'deleted@studyroom.io', user_metadata: { displayName: 'Deleted Guest' } }));
+    vi.spyOn(api, 'getRoom').mockResolvedValue({ room: { publicRoomId: 'room-1', name: 'Fresh Start', subject: 'Study', description: '', status: 'active', activeParticipants: 1, maxParticipants: 10, waitingRoomEnabled: false, passwordRequired: false, screenSharingEnabled: true, chatEnabled: true, expiresAt: null } });
+    vi.spyOn(api, 'joinRoom').mockRejectedValue(new ApiRequestError(401, 'USER_SESSION_INVALID', 'Sign in again'));
+
+    render(<AuthProvider><MemoryRouter initialEntries={['/room/fresh-start']}><Routes><Route path="/room/:roomId" element={<PreJoinPage/>}/><Route path="/login" element={<div>Create a new account to continue</div>}/></Routes></MemoryRouter></AuthProvider>);
+    await screen.findByText('Fresh Start');
+    await userEvent.click(screen.getByRole('button', { name: /join study room/i }));
+    expect(await screen.findByText('Create a new account to continue')).toBeInTheDocument();
+    expect(localStorage.getItem('studyroom.auth.user')).toBeNull();
   });
 });

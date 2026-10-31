@@ -6,7 +6,7 @@ import { AvatarSelector } from '../components/AvatarSelector';
 import { Avatar } from '../components/Avatar';
 import { Logo } from '../components/Logo';
 import { PasswordInput } from '../components/PasswordInput';
-import { api } from '../lib/api';
+import { ApiRequestError, api } from '../lib/api';
 import { getGuestClientId, guestSession, loadPreferences, savePreferences } from '../lib/guest';
 import { useAuth } from '../context/AuthContext';
 
@@ -15,7 +15,7 @@ interface DeviceInfo { cameras: MediaDeviceInfo[]; microphones: MediaDeviceInfo[
 export function PreJoinPage() {
   const { roomId = '' } = useParams();
   const navigate = useNavigate();
-  const { user, loading: authLoading, signOut } = useAuth();
+  const { user, session, loading: authLoading, signOut } = useAuth();
   const stored = loadPreferences();
 
   useEffect(() => {
@@ -105,10 +105,17 @@ export function PreJoinPage() {
     if (!input.success) { setPageError(input.error.issues[0]?.message ?? 'Check the submitted information.'); return; }
     setJoining(true); setPageError('');
     try {
-      const result = await api.joinRoom(roomId, input.data);
+      const result = await api.joinRoom(roomId, input.data, session?.access_token);
       if (result.status === 'waiting') { setWaiting(result); return; }
       stopPreview(); savePreferences({ displayName: name.trim(), email: joinEmail, avatarId: avatar, presentation, quality }); guestSession.save(roomId, result); sessionStorage.setItem(`studyroom.media.${roomId}`, JSON.stringify({ cameraOn, micOn, quality, cameraId, micId })); navigate(`/room/${roomId}/live`);
-    } catch (e) { setPageError(e instanceof Error ? e.message : 'Unable to join this room'); } finally { setJoining(false); }
+    } catch (e) {
+      if (e instanceof ApiRequestError && (e.code === 'USER_LOGIN_REQUIRED' || e.code === 'USER_SESSION_INVALID')) {
+        await signOut();
+        navigate(`/login?redirect=${encodeURIComponent(`/room/${roomId}`)}`, { replace: true });
+        return;
+      }
+      setPageError(e instanceof Error ? e.message : 'Unable to join this room');
+    } finally { setJoining(false); }
   }
 
   useEffect(() => {

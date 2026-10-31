@@ -2,11 +2,12 @@
 
 ## Implemented controls
 
-- No participant registration, email, phone, or verified real-world identity
+- Supabase email/password registration for participants; join requests are linked only after the API verifies the Supabase access token
 - Private administrator provisioning with scrypt password hashing
 - Opaque, revocable, expiring administrator sessions in HTTP-only SameSite cookies
 - CSRF cookie/header validation on every administrator mutation
 - Backend authorization on every administration endpoint
+- Server-only Supabase service-role access for deliberate administrator account deletion; the key is never exposed to Vite
 - Cryptographically random invitation, guest identity, session, and waiting tokens
 - One-way SHA-256 lookup hashes for session tokens at rest
 - 15-minute room-scoped LiveKit guest tokens
@@ -18,7 +19,7 @@
 - Generic production errors without stack traces or secrets
 - Five-minute stale guest cleanup and revocable room closure
 
-Camera and microphone tracks are sent through the configured LiveKit deployment after explicit browser permission. StudyRoom does not record meetings. The current chat channel is ephemeral and kept in process memory only long enough to broadcast each event. Guest session rows are pseudonymous and should be periodically removed according to the operator's retention policy.
+Camera and microphone tracks are sent through the configured LiveKit deployment after explicit browser permission. StudyRoom does not record meetings. Per-participant volume and hidden-video settings are local browser preferences and are not broadcast. The current chat channel is ephemeral and kept in process memory only long enough to broadcast each event. Guest session rows and private contact data should be periodically removed according to the operator's retention policy.
 
 ## Production checklist
 

@@ -43,19 +43,21 @@ function getInitialUser(): User | null {
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(getInitialUser);
   const [session, setSession] = useState<Session | null>(null);
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(isSupabaseConfigured);
 
   useEffect(() => {
     if (isSupabaseConfigured) {
       supabase.auth.getSession().then(({ data: { session } }) => {
         setSession(session);
+        setUser(session?.user ?? null);
         if (session?.user) {
-          setUser(session.user);
           try {
             localStorage.setItem(LOCAL_STORAGE_USER_KEY, JSON.stringify(session.user));
           } catch {
             /* ignored */
           }
+        } else {
+          localStorage.removeItem(LOCAL_STORAGE_USER_KEY);
         }
         setLoading(false);
       }).catch(() => {
@@ -64,13 +66,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
       const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
         setSession(session);
+        setUser(session?.user ?? null);
         if (session?.user) {
-          setUser(session.user);
           try {
             localStorage.setItem(LOCAL_STORAGE_USER_KEY, JSON.stringify(session.user));
           } catch {
             /* ignored */
           }
+        } else {
+          localStorage.removeItem(LOCAL_STORAGE_USER_KEY);
         }
         setLoading(false);
       });

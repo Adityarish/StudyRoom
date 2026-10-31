@@ -19,6 +19,8 @@ Copy `.env.example` to `.env.local` (or `.env`). Keep it private. The API loads 
 | --- | --- | --- |
 | `VITE_API_URL` | API origin compiled into the browser | `http://localhost:4000` |
 | `VITE_PUBLIC_APP_URL` | canonical origin for copied invitations | `http://localhost:5173` locally; production Vercel domain when deployed |
+| `VITE_SUPABASE_URL` | public Supabase Auth project URL | **Project Settings > API** |
+| `VITE_SUPABASE_ANON_KEY` | public browser authentication key | Supabase publishable/anon key |
 | `NODE_ENV` | cookie/security behavior | `development` |
 | `PORT` | Express port | `4000` |
 | `WEB_ORIGIN` | exact allowed browser origin | `http://localhost:5173` |
@@ -26,6 +28,8 @@ Copy `.env.example` to `.env.local` (or `.env`). Keep it private. The API loads 
 | `MIGRATION_DATABASE_URL` | optional direct/session-pooler migration DSN | Supabase **Connect** dialog; leave empty for local Compose |
 | `DATABASE_SSL` | managed database TLS toggle | `false` locally |
 | `DATABASE_POOL_MAX` | maximum API-side PostgreSQL connections | `10` for one Render instance |
+| `SUPABASE_URL` | server Supabase Auth project URL | same project URL as the browser |
+| `SUPABASE_SERVICE_ROLE_KEY` | server-only auth administration | Supabase secret/service-role key; never expose to Vite |
 | `SESSION_SECRET` | reserved application secret | `openssl rand -base64 48` |
 | `LIVEKIT_URL` | browser-reachable WebSocket URL | `ws://localhost:7880` |
 | `LIVEKIT_API_KEY` | server token issuer key | `devkey` locally |
@@ -44,7 +48,7 @@ Never prefix server secrets with `VITE_`; Vite variables are public browser code
 
 ### Supabase Postgres setup
 
-StudyRoom uses Supabase only as server-side Postgres. It does not use the browser Supabase SDK, so do not add a project URL, anon key, publishable key, or service-role key to the web app.
+StudyRoom uses Supabase Auth in the browser and Supabase Postgres on the server. `VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY` are public browser authentication values. `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` are server-only; the service-role key is required for the administrator's **Delete guest** action and must never use a `VITE_` prefix.
 
 1. Open the Supabase project, select **Connect**, and copy the Session pooler URI for an IPv4-hosted API such as Render.
 2. Put that URI in the ignored root `.env.local` as `DATABASE_URL`. Set `DATABASE_SSL=true`. For migrations, set `MIGRATION_DATABASE_URL` to the Direct URI when IPv6 is available, or reuse the Session pooler URI.
@@ -53,6 +57,8 @@ StudyRoom uses Supabase only as server-side Postgres. It does not use the browse
 5. Keep RLS enabled with no browser policies. Migration `006_supabase_privacy.sql` also revokes the `anon` and `authenticated` roles, because all access goes through the Express API.
 
 Migration `007_unique_guest_profiles.sql` separates a durable guest contact from individual room sessions. A join reuses the same `guest_profiles` row when any normalized email, normalized WhatsApp number, or stable browser client ID already exists. Historical duplicate sessions are consolidated during the migration, while `guest_sessions` remains the attendance/session history. The administrator can review the resulting one-row-per-person directory under **Unique guests**.
+
+Migration `009_guest_auth_accounts.sql` links those profiles to verified Supabase Auth users. Deleting a unique guest first removes the Supabase Auth account, disconnects every active LiveKit identity, then transactionally removes that guest's StudyRoom session history and profile. The deleted person must create a new account before joining again.
 
 The join is transactional: a meeting session is not created unless its contact fields are stored successfully in the same insert. If the room uses a waiting room, the row is stored when the guest requests entry and reused after approval.
 

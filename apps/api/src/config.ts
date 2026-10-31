@@ -33,6 +33,8 @@ const schema = z.object({
   RENDER: optionalString,
   EMAIL_PROVIDER: optionalEmailProvider,
   EMAIL_RELAY_URL: optionalUrl,
+  SUPABASE_URL: optionalUrl,
+  SUPABASE_SERVICE_ROLE_KEY: optionalString,
 });
 
 export type Config = z.infer<typeof schema>;

@@ -38,12 +38,14 @@ The browser receives only a short-lived participant token and the public WSS URL
 
 1. Create a Supabase project and save its database password in a password manager.
 2. In the project dashboard, select **Connect** and copy the **Session pooler** connection string. Render is a persistent, IPv4-hosted backend, so the session pooler is the most compatible choice. Replace the password placeholder with the URL-encoded database password.
-3. Keep this connection string server-only. StudyRoom does not need a Supabase URL, publishable key, anon key, or service-role key because the React client never talks directly to the database.
+3. Keep this connection string server-only. The React client uses only `VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY` for authentication; it never receives database credentials or the service-role key.
 4. The checked-in migration `006_supabase_privacy.sql` enables RLS and revokes `anon`/`authenticated` access to every StudyRoom table. Do not add public policies for `guest_sessions`; it contains private email and WhatsApp data.
 
 Use these API environment values:
 
 - `DATABASE_URL`: the Supabase Session pooler connection string
+- `SUPABASE_URL`: the project URL used by the server to verify join tokens
+- `SUPABASE_SERVICE_ROLE_KEY`: server-only key used to delete a guest's Supabase Auth account
 - `MIGRATION_DATABASE_URL`: a Direct connection string when your runtime supports IPv6, otherwise the same Session pooler string
 - `DATABASE_SSL=true`
 - `DATABASE_POOL_MAX=10`
@@ -58,6 +60,8 @@ After the first migration, `guest_sessions.email`, `guest_sessions.whatsapp_numb
    - `WEB_ORIGIN`: the exact final Vercel production origin, for example `https://studyroom-example.vercel.app` (you can temporarily enter the expected Vercel project URL and correct it after the first Vercel deploy).
    - `DATABASE_URL`
    - `MIGRATION_DATABASE_URL`
+   - `SUPABASE_URL`
+   - `SUPABASE_SERVICE_ROLE_KEY`
    - `LIVEKIT_URL`
    - `LIVEKIT_API_KEY`
    - `LIVEKIT_API_SECRET`

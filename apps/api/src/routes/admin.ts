@@ -10,9 +10,10 @@ import { HttpError } from '../http/errors.js';
 import { adminAuth, requireCsrf } from '../middleware/admin-auth.js';
 import { hashPassword, randomToken, tokenHash, verifyPassword } from '../security/crypto.js';
 import { formatWhatsAppNumber, maskWhatsAppNumber, prepareWhatsAppInvitations } from '../services/whatsapp-click-to-chat.js';
+import type { SupabaseAuthAdmin } from '../services/supabase-auth-admin.js';
 
 const listSql = `SELECT r.*, (SELECT count(DISTINCT g.profile_id) FROM guest_sessions g WHERE g.room_id=r.id AND g.left_at IS NULL AND g.approval_status='approved' AND g.last_seen_at>now()-interval '5 minutes')::int active_participants FROM study_rooms r`;
-export function adminRoutes(db: Database, config: Config, livekit: LiveKitService) {
+export function adminRoutes(db: Database, config: Config, livekit: LiveKitService, supabaseAuth: SupabaseAuthAdmin) {
   const router = Router(); const auth = adminAuth(db); const production = config.NODE_ENV === 'production';
   // Vercel and Render use different sites by default. SameSite=None keeps the
   // credentialed admin API usable there; local development remains Lax/HTTP.
@@ -35,6 +36,10 @@ export function adminRoutes(db: Database, config: Config, livekit: LiveKitServic
       joinCount: Number(contact.join_count), createdAt: new Date(contact.created_at).toISOString(),
       lastJoinedAt: new Date(contact.last_joined_at).toISOString(),
     })) });
+  }));
+  router.delete('/guest-contacts/:profileId', requireCsrf, asyncHandler(async (req, res) => {
+    await deleteGuestProfile(db, livekit, supabaseAuth, String(req.params.profileId));
+    res.status(204).end();
   }));
   router.get('/whatsapp-contacts', asyncHandler(async (_req, res) => {
     const result = await db.query(`SELECT id,display_name,whatsapp_number FROM guest_profiles
@@ -119,5 +124,40 @@ export async function deleteStudyRoom(db: Database, livekit: LiveKitService, roo
   }
   const deleted = await db.query('DELETE FROM study_rooms WHERE id=$1', [roomId]);
   if (!deleted.rowCount) throw new HttpError(404, 'ROOM_NOT_FOUND', 'Room not found.');
+}
+export async function deleteGuestProfile(db: Database, livekit: LiveKitService, supabaseAuth: SupabaseAuthAdmin, profileId: string) {
+  const found = await db.query(`SELECT profile.id,profile.email,profile.auth_user_id,
+    COALESCE(jsonb_agg(DISTINCT jsonb_build_object('roomName',room.livekit_room_name,'identity',session.guest_identity))
+      FILTER (WHERE session.id IS NOT NULL),'[]'::jsonb) AS connections
+    FROM guest_profiles profile
+    LEFT JOIN guest_sessions session ON session.profile_id=profile.id
+    LEFT JOIN study_rooms room ON room.id=session.room_id
+    WHERE profile.id=$1
+    GROUP BY profile.id`, [profileId]);
+  const profile = found.rows[0];
+  if (!profile) throw new HttpError(404, 'GUEST_PROFILE_NOT_FOUND', 'This guest profile no longer exists.');
+
+  await supabaseAuth.deleteUser({
+    id: profile.auth_user_id ? String(profile.auth_user_id) : null,
+    email: profile.email ? String(profile.email) : null,
+  });
+
+  const connections = (profile.connections ?? []) as Array<{ roomName: string | null; identity: string }>;
+  const disconnects = await Promise.allSettled(connections.filter(item => item.roomName).map(item => livekit.remove(item.roomName!, item.identity)));
+  if (disconnects.some(result => result.status === 'rejected')) console.warn('One or more LiveKit connections could not be closed during guest deletion.');
+
+  const client = await db.connect();
+  try {
+    await client.query('BEGIN');
+    await client.query('DELETE FROM guest_sessions WHERE profile_id=$1', [profileId]);
+    const deleted = await client.query('DELETE FROM guest_profiles WHERE id=$1', [profileId]);
+    if (!deleted.rowCount) throw new HttpError(404, 'GUEST_PROFILE_NOT_FOUND', 'This guest profile no longer exists.');
+    await client.query('COMMIT');
+  } catch (error) {
+    await client.query('ROLLBACK').catch(() => {});
+    throw error;
+  } finally {
+    client.release();
+  }
 }
 function assertFutureExpiry(value: string | null | undefined) { if (value && new Date(value) <= new Date()) throw new HttpError(400, 'EXPIRY_IN_PAST', 'Room expiration must be in the future.'); }

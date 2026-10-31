@@ -1,6 +1,6 @@
 # StudyRoom
 
-StudyRoom is a login-free video conferencing platform for study groups. Guests join from a private room link with only a display name and locally bundled avatar. Administrators are provisioned privately and manage room capacity, expiry, waiting rooms, passwords, chat, screen sharing, participants, and direct room deletion.
+StudyRoom is a video conferencing platform for study groups. Guests authenticate with Supabase, then join a private room link with a display name and locally bundled avatar. Administrators are provisioned privately and manage room capacity, expiry, waiting rooms, passwords, chat, screen sharing, participants, durable guest accounts, and direct room deletion.
 
 The application is a TypeScript monorepo:
 

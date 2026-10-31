@@ -29,8 +29,12 @@ try {
   if (!activeSessionIndex.rows[0]?.present) throw new Error('Participant session integrity index is missing. Run npm run db:migrate.');
   const duplicateActive = await pool.query(`SELECT 1 FROM guest_sessions WHERE left_at IS NULL GROUP BY room_id,profile_id HAVING count(*)>1 LIMIT 1`);
   if (duplicateActive.rowCount) throw new Error('Duplicate active participant sessions remain. Run npm run db:migrate.');
+  const authProfileColumn = await pool.query<{ present: boolean }>(`SELECT EXISTS (
+    SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='guest_profiles' AND column_name='auth_user_id'
+  ) AS present`);
+  if (!authProfileColumn.rows[0]?.present) throw new Error('Guest Supabase account linkage is missing. Run npm run db:migrate.');
 
-  console.log('Supabase connection OK. Unique profiles, one active room session per participant, contact fields, and RLS protection are ready.');
+  console.log('Supabase connection OK. Auth-linked unique profiles, one active room session per participant, contact fields, and RLS protection are ready.');
 } finally {
   await pool.end();
 }

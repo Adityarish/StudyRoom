@@ -17,6 +17,7 @@
   },
   "dependencies": {
     "@livekit/protocol": "^1.52.1",
+    "@supabase/supabase-js": "^2.118.0",
     "@studyroom/shared": "1.0.0",
     "cookie-parser": "^1.4.7",
     "cors": "^2.8.5",

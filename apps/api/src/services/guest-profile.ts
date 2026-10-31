@@ -1,6 +1,7 @@
 import type { PoolClient } from 'pg';
 
 interface GuestProfileInput {
+  authUserId: string | null;
   clientId: string;
   displayName: string;
   avatarId: string;
@@ -10,11 +11,12 @@ interface GuestProfileInput {
   whatsappConsent: boolean;
 }
 
-type IdentifierKind = 'client' | 'email' | 'whatsapp';
+type IdentifierKind = 'auth' | 'client' | 'email' | 'whatsapp';
 
 export async function resolveGuestProfile(client: PoolClient, input: GuestProfileInput) {
   const contactIdentifiers: Array<{ kind: IdentifierKind; value: string }> = [];
   const hasContactIdentifier = Boolean(input.email || input.whatsappNumber);
+  if (input.authUserId) contactIdentifiers.push({ kind: 'auth', value: input.authUserId });
   if (input.email) contactIdentifiers.push({ kind: 'email', value: input.email });
   if (input.whatsappNumber) contactIdentifiers.push({ kind: 'whatsapp', value: input.whatsappNumber });
   const lockIdentifiers = [...contactIdentifiers, { kind: 'client' as const, value: input.clientId }]
@@ -26,10 +28,11 @@ export async function resolveGuestProfile(client: PoolClient, input: GuestProfil
 
   const contactMatches = await client.query<{ id: string }>(`SELECT DISTINCT profile.id
     FROM guest_profiles profile
-    JOIN guest_profile_identifiers identifier ON identifier.profile_id=profile.id
+    LEFT JOIN guest_profile_identifiers identifier ON identifier.profile_id=profile.id
     WHERE ($1::text IS NOT NULL AND identifier.kind='email' AND identifier.value=$1)
        OR ($2::text IS NOT NULL AND identifier.kind='whatsapp' AND identifier.value=$2)
-    ORDER BY profile.id`, [input.email, input.whatsappNumber]);
+       OR ($3::uuid IS NOT NULL AND profile.auth_user_id=$3)
+    ORDER BY profile.id`, [input.email, input.whatsappNumber, input.authUserId]);
 
   let matches = contactMatches.rows;
   let matchedContactlessClient = false;
@@ -60,10 +63,10 @@ export async function resolveGuestProfile(client: PoolClient, input: GuestProfil
   let profileId: string;
   if (matches.length === 0) {
     const created = await client.query<{ id: string }>(`INSERT INTO guest_profiles(
-      display_name,avatar_id,presentation,email,whatsapp_number,whatsapp_consent,last_joined_at
-    ) VALUES($1,$2,$3,$4,$5,$6,now()) RETURNING id`, [
+      display_name,avatar_id,presentation,email,whatsapp_number,whatsapp_consent,auth_user_id,last_joined_at
+    ) VALUES($1,$2,$3,$4,$5,$6,$7,now()) RETURNING id`, [
       input.displayName, input.avatarId, input.presentation ?? null, input.email,
-      input.whatsappNumber, input.whatsappConsent,
+      input.whatsappNumber, input.whatsappConsent, input.authUserId,
     ]);
     profileId = created.rows[0]!.id;
   } else {
@@ -85,16 +88,18 @@ export async function resolveGuestProfile(client: PoolClient, input: GuestProfil
       display_name=$2,avatar_id=$3,presentation=$4,email=COALESCE($5,email),
       whatsapp_number=COALESCE($6,whatsapp_number),
       whatsapp_consent=CASE WHEN $6::text IS NOT NULL THEN $7 ELSE whatsapp_consent END,
+      auth_user_id=COALESCE($8,auth_user_id),
       updated_at=now(),last_joined_at=now()
-      WHERE id=$1`, [profileId, input.displayName, input.avatarId, input.presentation ?? null, input.email, input.whatsappNumber, input.whatsappConsent]);
+      WHERE id=$1`, [profileId, input.displayName, input.avatarId, input.presentation ?? null, input.email, input.whatsappNumber, input.whatsappConsent, input.authUserId]);
   }
 
   // A shared browser is not proof that two named/contactable guests are the
   // same person. Keep the browser identifier only for contactless profiles or
   // when a contactless profile is being upgraded with its first contact.
+  const persistentIdentifiers = contactIdentifiers.filter(identifier => identifier.kind !== 'auth');
   const identifiers = hasContactIdentifier && !matchedContactlessClient
-    ? contactIdentifiers
-    : [...contactIdentifiers, { kind: 'client' as const, value: input.clientId }];
+    ? persistentIdentifiers
+    : [...persistentIdentifiers, { kind: 'client' as const, value: input.clientId }];
   for (const identifier of identifiers) {
     await client.query(`INSERT INTO guest_profile_identifiers(kind,value,profile_id)
       VALUES($1,$2,$3)

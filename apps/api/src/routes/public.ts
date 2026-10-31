@@ -13,18 +13,21 @@ import { emailErrorCode, type NotificationMailer } from '../services/notificatio
 import { prepareWhatsAppInvitations } from '../services/whatsapp-click-to-chat.js';
 import { normalizeGuestContact } from '../services/guest-contact.js';
 import { resolveGuestProfile } from '../services/guest-profile.js';
+import type { SupabaseAuthAdmin } from '../services/supabase-auth-admin.js';
 
 const roomSelect = `SELECT r.*, (SELECT count(DISTINCT g.profile_id) FROM guest_sessions g WHERE g.room_id=r.id AND g.left_at IS NULL AND g.approval_status='approved' AND g.last_seen_at > now()-interval '5 minutes')::int AS active_participants FROM study_rooms r`;
 
-export function publicRoutes(db: Database, livekit: LiveKitService, mailer: NotificationMailer, config: Config) {
+export function publicRoutes(db: Database, livekit: LiveKitService, mailer: NotificationMailer, config: Config, supabaseAuth: SupabaseAuthAdmin) {
   const router = Router();
   router.get('/rooms/:roomId', asyncHandler(async (req, res) => { const result = await db.query(`${roomSelect} WHERE r.public_room_id=$1`, [req.params.roomId]); const row = result.rows[0]; if (!row) throw new HttpError(404, 'ROOM_NOT_FOUND', 'This invitation does not match a study room.'); if (row.status !== 'active') throw new HttpError(410, 'ROOM_CLOSED', 'This study room has been closed.'); if (row.expires_at && new Date(row.expires_at) <= new Date()) throw new HttpError(410, 'ROOM_EXPIRED', 'This study room has expired.'); res.json({ room: stripAdmin(mapRoom(row)) }); }));
   router.post('/rooms/:roomId/join', asyncHandler(async (req, res) => {
-    const input = guestJoinSchema.parse(req.body); const client = await db.connect();
+    const input = guestJoinSchema.parse(req.body);
+    const verifiedUser = await supabaseAuth.verifyAccessToken(req.get('authorization'));
+    const client = await db.connect();
     try { await client.query('BEGIN'); const result = await client.query(`${roomSelect} WHERE r.public_room_id=$1 FOR UPDATE OF r`, [req.params.roomId]); const room = result.rows[0]; if (!room) throw new HttpError(404, 'ROOM_NOT_FOUND', 'This invitation does not match a study room.');
       if (room.room_password_hash) { if (!input.roomPassword || !(await verifyPassword(input.roomPassword, room.room_password_hash))) throw new HttpError(403, 'ROOM_PASSWORD_INVALID', 'The room password is incorrect.'); }
-      const contact = normalizeGuestContact(input);
-      const profileId = await resolveGuestProfile(client, { clientId: input.clientId, displayName: input.displayName, avatarId: input.avatarId, presentation: input.presentation, ...contact });
+      const contact = normalizeGuestContact({ ...input, email: verifiedUser?.email ?? input.email });
+      const profileId = await resolveGuestProfile(client, { authUserId: verifiedUser?.id ?? null, clientId: input.clientId, displayName: input.displayName, avatarId: input.avatarId, presentation: input.presentation, ...contact });
       const previous = await client.query<{ guest_identity: string; approval_status: string }>(`SELECT guest_identity,approval_status FROM guest_sessions WHERE room_id=$1 AND profile_id=$2 AND left_at IS NULL FOR UPDATE`, [room.id, profileId]);
       const replacingApprovedSession = previous.rows.some(session => session.approval_status === 'approved');
       assertRoomJoinable(room, new Date(), replacingApprovedSession);
