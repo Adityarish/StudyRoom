@@ -1,4 +1,5 @@
 import nodemailer, { type Transporter } from 'nodemailer';
+import { createHash } from 'node:crypto';
 import type { Config } from '../config.js';
 
 export interface ReminderInput {
@@ -20,7 +21,7 @@ export function normalizeSmtpPassword(host: string | undefined, password: string
   return host?.toLowerCase() === 'smtp.gmail.com' ? password.replace(/\s+/g, '') : password;
 }
 
-export type EmailProvider = 'supabase' | 'smtp' | 'none';
+export type EmailProvider = 'relay' | 'smtp' | 'none';
 export type EmailDeliveryStatus = 'unconfigured' | 'checking' | 'ready' | 'error';
 
 class EmailProviderError extends Error {
@@ -37,23 +38,41 @@ export function emailErrorCode(error: unknown) {
   return 'UNKNOWN';
 }
 
+export function relayCredential(password: string) {
+  return createHash('sha256').update(`studyroom-email-relay-v1\0${password}`).digest('hex');
+}
+
+function defaultRelayUrl(config: Config) {
+  if (!config.WEB_ORIGIN.startsWith('https://')) return undefined;
+  return `${config.WEB_ORIGIN.replace(/\/+$/, '')}/api/email-reminder`;
+}
+
 export class NotificationMailer {
   private transporter: Transporter | null = null;
+  private relayUrl: string | undefined;
+  private relayKey: string | undefined;
   readonly configured: boolean;
   readonly provider: EmailProvider;
   status: EmailDeliveryStatus;
 
   constructor(private config: Config) {
-    const supabaseKey = config.SUPABASE_SERVICE_ROLE_KEY || config.SUPABASE_ANON_KEY;
-    const supabaseConfigured = Boolean(config.SUPABASE_URL && supabaseKey);
     const smtpConfigured = Boolean(config.SMTP_HOST && config.SMTP_PORT && config.SMTP_USER && config.SMTP_PASS);
+    this.relayUrl = config.EMAIL_RELAY_URL ?? defaultRelayUrl(config);
+    this.relayKey = config.SMTP_PASS ? relayCredential(normalizeSmtpPassword(config.SMTP_HOST, config.SMTP_PASS) ?? '') : undefined;
+    const relayConfigured = Boolean(this.relayUrl && this.relayKey);
+    const requestedProvider = config.EMAIL_PROVIDER === 'supabase' ? 'relay' : config.EMAIL_PROVIDER;
+    const renderRelay = config.NODE_ENV === 'production' && config.RENDER === 'true' && relayConfigured;
 
-    if (config.EMAIL_PROVIDER === 'supabase' && supabaseConfigured) {
-      this.provider = 'supabase';
-    } else if (config.EMAIL_PROVIDER === 'smtp' && smtpConfigured) {
-      this.provider = 'smtp';
-    } else if (supabaseConfigured) {
-      this.provider = 'supabase';
+    if (requestedProvider === 'none') {
+      this.provider = 'none';
+    } else if (renderRelay) {
+      this.provider = 'relay';
+    } else if (requestedProvider === 'relay') {
+      this.provider = relayConfigured ? 'relay' : 'none';
+    } else if (requestedProvider === 'smtp') {
+      this.provider = smtpConfigured ? 'smtp' : 'none';
+    } else if (config.NODE_ENV === 'production' && relayConfigured) {
+      this.provider = 'relay';
     } else if (smtpConfigured) {
       this.provider = 'smtp';
     } else {
@@ -61,7 +80,7 @@ export class NotificationMailer {
     }
 
     this.configured = this.provider !== 'none';
-    this.status = this.configured ? 'ready' : 'unconfigured';
+    this.status = this.configured ? 'checking' : 'unconfigured';
 
     if (this.provider === 'smtp') {
       this.transporter = nodemailer.createTransport({
@@ -78,21 +97,14 @@ export class NotificationMailer {
 
   async verify() {
     if (!this.configured) throw new EmailProviderError('EMAIL_NOT_CONFIGURED');
-    if (this.provider === 'supabase') {
+    if (this.provider === 'relay') {
       this.status = 'checking';
       try {
-        const supabaseUrl = (this.config.SUPABASE_URL || 'https://xsymqphrfkklhegnkhav.supabase.co').replace(/\/+$/, '');
-        const apiKey = this.config.SUPABASE_SERVICE_ROLE_KEY || this.config.SUPABASE_ANON_KEY || '';
-        const response = await fetch(`${supabaseUrl}/auth/v1/settings`, {
-          headers: apiKey ? { apikey: apiKey, Authorization: `Bearer ${apiKey}` } : {},
-        });
-        if (response.ok || response.status === 401 || response.status === 403 || response.status === 200) {
-          this.status = 'ready';
-        } else {
-          this.status = 'error';
-        }
-      } catch {
+        await this.callRelay({ action: 'verify' });
+        this.status = 'ready';
+      } catch (error) {
         this.status = 'error';
+        throw error;
       }
       return;
     }
@@ -110,36 +122,11 @@ export class NotificationMailer {
   async sendReminder(input: ReminderInput) {
     if (!this.configured) throw new EmailProviderError('EMAIL_NOT_CONFIGURED');
 
-    if (this.provider === 'supabase') {
-      const supabaseUrl = (this.config.SUPABASE_URL || 'https://xsymqphrfkklhegnkhav.supabase.co').replace(/\/+$/, '');
-      const apiKey = this.config.SUPABASE_SERVICE_ROLE_KEY || this.config.SUPABASE_ANON_KEY || '';
+    if (this.provider === 'relay') {
       try {
-        const response = await fetch(`${supabaseUrl}/auth/v1/otp`, {
-          method: 'POST',
-          headers: {
-            'apikey': apiKey,
-            'Authorization': `Bearer ${apiKey}`,
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            email: input.to,
-            email_redirect_to: input.roomUrl,
-            data: {
-              targetName: input.targetName,
-              requesterName: input.requesterName,
-              roomName: input.roomName,
-              roomUrl: input.roomUrl,
-            },
-          }),
-        });
-
-        if (!response.ok) {
-          const body = await response.text().catch(() => '');
-          throw new Error(`Supabase email delivery failed (${response.status}): ${body || response.statusText}`);
-        }
-
+        const result = await this.callRelay({ action: 'send', reminder: input });
         this.status = 'ready';
-        return { messageId: `supabase_${Date.now()}` };
+        return { messageId: result.messageId ?? `relay_${Date.now()}` };
       } catch (error) {
         this.status = 'error';
         throw error;
@@ -161,5 +148,21 @@ export class NotificationMailer {
       this.status = 'error';
       throw error;
     }
+  }
+
+  private async callRelay(payload: { action: 'verify' } | { action: 'send'; reminder: ReminderInput }) {
+    if (!this.relayUrl || !this.relayKey) throw new EmailProviderError('EMAIL_RELAY_NOT_CONFIGURED');
+    const response = await fetch(this.relayUrl, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-StudyRoom-Relay-Key': this.relayKey,
+      },
+      body: JSON.stringify(payload),
+      signal: AbortSignal.timeout(25_000),
+    });
+    const body = await response.json().catch(() => null) as { messageId?: string; error?: { code?: string } } | null;
+    if (!response.ok) throw new EmailProviderError(body?.error?.code ?? `EMAIL_RELAY_${response.status}`);
+    return body ?? {};
   }
 }

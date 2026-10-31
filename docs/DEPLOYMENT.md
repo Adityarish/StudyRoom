@@ -123,8 +123,13 @@ The bootstrap command hashes the password before storage.
 
 ## 7. Optional email reminders
 
-This project uses SMTP only. Add these values only to the Render API service,
-never to Vercel:
+StudyRoom uses Gmail SMTP credentials, but a free Render service cannot open
+SMTP ports. Production therefore uses this path:
+
+`Render API -> signed HTTPS request -> Vercel Function -> Gmail SMTP`
+
+Add the same server-only values to both the Render API service and the Vercel
+project's Production environment:
 
 - `SMTP_HOST`
 - `SMTP_PORT`
@@ -142,16 +147,22 @@ Use `smtp.gmail.com`, your full Gmail address as `SMTP_USER`, and a Google App
 Password as `SMTP_PASS`. A copied App Password may contain display spaces; the
 API removes those spaces only for Gmail.
 
-Render free web services block outbound SMTP ports 25, 465, and 587. Changing
-between 465 and 587 therefore does not enable Gmail SMTP on a free service. Use
-a paid Render web-service instance for SMTP delivery.
+Never prefix these values with `VITE_`. The Vercel Function validates a
+credential derived from the Gmail App Password before it will verify or send.
+The raw password is not sent between Render and Vercel. `EMAIL_RELAY_URL` is
+optional; by default the API uses `<WEB_ORIGIN>/api/email-reminder`.
 
-After saving the variables, redeploy. The API checks SMTP during startup.
-`/api/health` should report `"emailProvider":"smtp"` and
-`"emailStatus":"ready"`. Run `npm run smtp:check` where Shell access is
-available; it verifies the connection without sending an email. Then perform
-one deliberate inbox test from the meeting People panel. Render logs record
-`Email reminder sent` only after Gmail accepts the message.
+Render free web services block outbound SMTP ports 25, 465, and 587. Vercel
+Functions permit outbound SMTP on 465 and 587, so the HTTPS relay keeps the API
+on Render's free plan without using Supabase Auth emails as reminders.
+
+Deploy Vercel first, then redeploy Render. The Render API verifies Gmail through
+the relay during startup. `/api/health` should report
+`"emailProvider":"relay"` and `"emailStatus":"ready"`. Run
+`npm run smtp:check` locally to verify the credentials directly without sending
+an email. Then perform one deliberate inbox test from the meeting People panel.
+Render logs record `Email reminder sent` only after Vercel reports that Gmail
+accepted the message.
 
 ## 8. Production verification
 

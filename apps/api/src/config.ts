@@ -6,6 +6,11 @@ for (const candidate of [resolve(process.cwd(), '.env.local'), resolve(process.c
 
 const booleanString = z.string().default('false').transform(v => v === 'true');
 const optionalString = z.preprocess(value => typeof value === 'string' && value.trim() === '' ? undefined : value, z.string().min(1).optional());
+const optionalUrl = z.preprocess(value => typeof value === 'string' && value.trim() === '' ? undefined : value, z.string().url().optional());
+const optionalEmailProvider = z.preprocess(
+  value => typeof value === 'string' && value.trim() === '' ? undefined : value,
+  z.enum(['relay', 'smtp', 'none', 'supabase']).optional(),
+);
 const schema = z.object({
   NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
   PORT: z.coerce.number().int().min(1).max(65535).default(4000),
@@ -25,20 +30,14 @@ const schema = z.object({
   SMTP_PASS: optionalString,
   SMTP_FROM: optionalString,
   TRUST_PROXY: z.string().default('false'),
-  EMAIL_PROVIDER: z.enum(['supabase', 'smtp', 'none']).optional(),
-  SUPABASE_URL: optionalString.default('https://xsymqphrfkklhegnkhav.supabase.co'),
-  SUPABASE_ANON_KEY: optionalString,
-  SUPABASE_SERVICE_ROLE_KEY: optionalString,
+  RENDER: optionalString,
+  EMAIL_PROVIDER: optionalEmailProvider,
+  EMAIL_RELAY_URL: optionalUrl,
 });
 
 export type Config = z.infer<typeof schema>;
 export function loadConfig(environment: NodeJS.ProcessEnv = process.env): Config {
-  const merged = {
-    ...environment,
-    SUPABASE_ANON_KEY: environment.SUPABASE_ANON_KEY || environment.VITE_SUPABASE_ANON_KEY,
-    SUPABASE_URL: environment.SUPABASE_URL || environment.VITE_SUPABASE_URL || 'https://xsymqphrfkklhegnkhav.supabase.co',
-  };
-  const result = schema.safeParse(merged);
+  const result = schema.safeParse(environment);
   if (!result.success) {
     const fields = result.error.issues.map(i => `${i.path.join('.')}: ${i.message}`).join('\n');
     throw new Error(`Invalid environment configuration:\n${fields}`);

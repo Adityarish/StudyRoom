@@ -36,6 +36,8 @@ Copy `.env.example` to `.env.local` (or `.env`). Keep it private. The API loads 
 | `SMTP_USER` | server-only SMTP login | full Gmail address or provider username |
 | `SMTP_PASS` | server-only SMTP password | Google App Password or provider credential; never the normal Gmail password |
 | `SMTP_FROM` | optional From header | for example `StudyRoom <your-address@gmail.com>` |
+| `EMAIL_PROVIDER` | optional delivery override | blank for automatic, `relay`, `smtp`, or `none` |
+| `EMAIL_RELAY_URL` | optional HTTPS relay override | defaults to `<WEB_ORIGIN>/api/email-reminder` in production |
 | `TRUST_PROXY` | Express proxy trust | `false` locally; normally `true` behind one controlled proxy |
 
 Never prefix server secrets with `VITE_`; Vite variables are public browser code.
@@ -67,7 +69,7 @@ For Gmail, enable 2-Step Verification, create a Google App Password, and place t
 npm run smtp:check
 ```
 
-SMTP is optional; meetings continue to work when it is not configured, but the Notify action will not be offered.
+SMTP is optional; meetings continue to work when it is not configured, but the Notify action will not be offered. Locally, the API sends directly through SMTP. In production, it uses the protected Vercel HTTPS relay automatically so a free Render API does not need outbound SMTP access.
 
 ### Optional WhatsApp invitations
 

@@ -1,7 +1,8 @@
-import { loadConfig } from '../config.js';
+import { loadConfig, type Config } from '../config.js';
 import { NotificationMailer } from '../services/notification-mailer.js';
 
-const mailer = new NotificationMailer(loadConfig());
+const config = loadConfig();
+const mailer = new NotificationMailer({ ...config, EMAIL_PROVIDER: 'smtp' } as Config);
 if (!mailer.configured) {
   console.error('SMTP is not configured. Add the SMTP variables to the private environment.');
   process.exitCode = 1;
