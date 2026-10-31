@@ -7,7 +7,7 @@ interface AuthContextValue {
   session: Session | null;
   loading: boolean;
   signIn: (email: string, password: string) => Promise<{ error?: string }>;
-  signUp: (email: string, password: string, displayName?: string) => Promise<{ error?: string }>;
+  signUp: (email: string, password: string, displayName?: string, redirectTo?: string) => Promise<{ error?: string; requiresConfirmation?: boolean }>;
   signOut: () => Promise<void>;
   isConfigured: boolean;
 }
@@ -16,16 +16,47 @@ const AuthContext = createContext<AuthContextValue | null>(null);
 
 const LOCAL_STORAGE_USER_KEY = 'studyroom.auth.user';
 
+function getInitialUser(): User | null {
+  try {
+    const stored = localStorage.getItem(LOCAL_STORAGE_USER_KEY);
+    if (stored) return JSON.parse(stored) as User;
+    const prefRaw = localStorage.getItem('studyroom.preferences');
+    if (prefRaw) {
+      const pref = JSON.parse(prefRaw);
+      if (pref?.email) {
+        return {
+          id: `saved_${pref.email.replace(/[^a-z0-9]/g, '_')}`,
+          email: pref.email,
+          user_metadata: { displayName: pref.displayName || pref.email.split('@')[0] },
+          app_metadata: {},
+          aud: 'authenticated',
+          created_at: new Date().toISOString(),
+        } as unknown as User;
+      }
+    }
+  } catch {
+    /* ignored */
+  }
+  return null;
+}
+
 export function AuthProvider({ children }: { children: ReactNode }) {
-  const [user, setUser] = useState<User | null>(null);
+  const [user, setUser] = useState<User | null>(getInitialUser);
   const [session, setSession] = useState<Session | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(false);
 
   useEffect(() => {
     if (isSupabaseConfigured) {
       supabase.auth.getSession().then(({ data: { session } }) => {
         setSession(session);
-        setUser(session?.user ?? null);
+        if (session?.user) {
+          setUser(session.user);
+          try {
+            localStorage.setItem(LOCAL_STORAGE_USER_KEY, JSON.stringify(session.user));
+          } catch {
+            /* ignored */
+          }
+        }
         setLoading(false);
       }).catch(() => {
         setLoading(false);
@@ -33,7 +64,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
       const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
         setSession(session);
-        setUser(session?.user ?? null);
+        if (session?.user) {
+          setUser(session.user);
+          try {
+            localStorage.setItem(LOCAL_STORAGE_USER_KEY, JSON.stringify(session.user));
+          } catch {
+            /* ignored */
+          }
+        }
         setLoading(false);
       });
 
@@ -41,15 +79,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         subscription.unsubscribe();
       };
     } else {
-      try {
-        const stored = localStorage.getItem(LOCAL_STORAGE_USER_KEY);
-        if (stored) {
-          const parsed = JSON.parse(stored) as User;
-          setUser(parsed);
-        }
-      } catch {
-        /* ignored */
-      }
       setLoading(false);
     }
   }, []);
@@ -67,6 +96,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       if (error) return { error: error.message };
       setSession(data.session);
       setUser(data.user);
+      if (data.user) {
+        try {
+          localStorage.setItem(LOCAL_STORAGE_USER_KEY, JSON.stringify(data.user));
+        } catch {
+          /* ignored */
+        }
+      }
       return {};
     } else {
       const devUser = {
@@ -85,16 +121,21 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   };
 
-  const signUp = async (email: string, password: string, displayName?: string): Promise<{ error?: string }> => {
+  const signUp = async (email: string, password: string, displayName?: string, redirectTo?: string): Promise<{ error?: string; requiresConfirmation?: boolean }> => {
     const cleanEmail = email.trim().toLowerCase();
     if (!cleanEmail) return { error: 'Please enter an email address.' };
     if (!password || password.length < 6) return { error: 'Password must be at least 6 characters.' };
 
     if (isSupabaseConfigured) {
+      const emailRedirectTo = typeof window !== 'undefined'
+        ? `${window.location.origin}${redirectTo ? (redirectTo.startsWith('/') ? redirectTo : `/${redirectTo}`) : '/'}`
+        : undefined;
+
       const { data, error } = await supabase.auth.signUp({
         email: cleanEmail,
         password,
         options: {
+          emailRedirectTo,
           data: {
             displayName: displayName?.trim() || cleanEmail.split('@')[0],
           },
@@ -103,7 +144,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       if (error) return { error: error.message };
       setSession(data.session);
       setUser(data.user);
-      return {};
+      if (data.user) {
+        try {
+          localStorage.setItem(LOCAL_STORAGE_USER_KEY, JSON.stringify(data.user));
+        } catch {
+          /* ignored */
+        }
+      }
+      const requiresConfirmation = !data.session;
+      return { requiresConfirmation };
     } else {
       const devUser = {
         id: `dev_${cleanEmail.replace(/[^a-z0-9]/g, '_')}`,

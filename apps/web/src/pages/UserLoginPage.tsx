@@ -18,6 +18,7 @@ export function UserLoginPage() {
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
+  const [confirmationSent, setConfirmationSent] = useState(false);
 
   // If already logged in, redirect immediately
   useEffect(() => {
@@ -33,9 +34,11 @@ export function UserLoginPage() {
 
     try {
       if (mode === 'signup') {
-        const result = await signUp(email, password, displayName);
+        const result = await signUp(email, password, displayName, redirect);
         if (result.error) {
           setError(result.error);
+        } else if (result.requiresConfirmation) {
+          setConfirmationSent(true);
         } else {
           navigate(redirect || '/', { replace: true });
         }
@@ -77,121 +80,149 @@ export function UserLoginPage() {
           <ArrowLeft size={16} /> Back to StudyRoom
         </a>
 
-        <form className="auth-form" onSubmit={handleSubmit}>
-          <div className="eyebrow">
-            <Sparkles size={15} /> {isRoomInvite ? 'Study Room Invitation' : 'StudyRoom Account'}
-          </div>
-
-          <h2>{mode === 'signin' ? 'Sign in' : 'Create an account'}</h2>
-          <p>
-            {isRoomInvite
-              ? mode === 'signin'
-                ? 'Sign in to join your study room without entering your email again.'
-                : 'Create an account to join your study room with a permanent profile.'
-              : mode === 'signin'
-              ? 'Enter your email and password to continue.'
-              : 'Sign up to keep your presence and name consistent.'}
-          </p>
-
-          <div className="auth-tabs" role="tablist">
+        {confirmationSent ? (
+          <div className="auth-form auth-confirmation-box">
+            <div className="eyebrow">
+              <Sparkles size={15} /> Confirm your email
+            </div>
+            <h2>Check your email</h2>
+            <p>
+              We sent a verification link to <strong>{email}</strong> via your Supabase SMTP.
+            </p>
+            <div className="auth-confirmation-notice">
+              <p>
+                Click the <strong>Confirm email address</strong> link in your email to activate your account and return to{' '}
+                <strong>{isRoomInvite ? 'your study room' : 'StudyRoom'}</strong>.
+              </p>
+              <small className="field-hint">
+                Note: Check your <strong>Spam</strong> or <strong>Updates</strong> folder if you don't see it in your primary inbox.
+              </small>
+            </div>
             <button
               type="button"
-              role="tab"
-              aria-selected={mode === 'signin'}
-              className={`auth-tab ${mode === 'signin' ? 'active' : ''}`}
-              onClick={() => { setMode('signin'); setError(''); }}
+              className="button button-primary button-wide"
+              onClick={() => { setConfirmationSent(false); setMode('signin'); }}
             >
-              Sign in
-            </button>
-            <button
-              type="button"
-              role="tab"
-              aria-selected={mode === 'signup'}
-              className={`auth-tab ${mode === 'signup' ? 'active' : ''}`}
-              onClick={() => { setMode('signup'); setError(''); }}
-            >
-              Create account
+              Back to Sign in
             </button>
           </div>
+        ) : (
+          <form className="auth-form" onSubmit={handleSubmit}>
+            <div className="eyebrow">
+              <Sparkles size={15} /> {isRoomInvite ? 'Study Room Invitation' : 'StudyRoom Account'}
+            </div>
 
-          {mode === 'signup' && (
+            <h2>{mode === 'signin' ? 'Sign in' : 'Create an account'}</h2>
+            <p>
+              {isRoomInvite
+                ? mode === 'signin'
+                  ? 'Sign in to join your study room without entering your email again.'
+                  : 'Create an account to join your study room with a permanent profile.'
+                : mode === 'signin'
+                ? 'Enter your email and password to continue.'
+                : 'Sign up to keep your presence and name consistent.'}
+            </p>
+
+            <div className="auth-tabs" role="tablist">
+              <button
+                type="button"
+                role="tab"
+                aria-selected={mode === 'signin'}
+                className={`auth-tab ${mode === 'signin' ? 'active' : ''}`}
+                onClick={() => { setMode('signin'); setError(''); }}
+              >
+                Sign in
+              </button>
+              <button
+                type="button"
+                role="tab"
+                aria-selected={mode === 'signup'}
+                className={`auth-tab ${mode === 'signup' ? 'active' : ''}`}
+                onClick={() => { setMode('signup'); setError(''); }}
+              >
+                Create account
+              </button>
+            </div>
+
+            {mode === 'signup' && (
+              <label>
+                Display Name
+                <div className="input-with-icon">
+                  <UserIcon size={16} />
+                  <input
+                    type="text"
+                    maxLength={48}
+                    placeholder="e.g. Alex Rivera"
+                    value={displayName}
+                    onChange={e => setDisplayName(e.target.value)}
+                    required
+                  />
+                </div>
+              </label>
+            )}
+
             <label>
-              Display Name
+              Email address
               <div className="input-with-icon">
-                <UserIcon size={16} />
+                <Mail size={16} />
                 <input
-                  type="text"
-                  maxLength={48}
-                  placeholder="e.g. Alex Rivera"
-                  value={displayName}
-                  onChange={e => setDisplayName(e.target.value)}
+                  type="email"
+                  autoComplete="email"
+                  placeholder="you@example.com"
+                  value={email}
+                  onChange={e => setEmail(e.target.value)}
                   required
                 />
               </div>
             </label>
-          )}
 
-          <label>
-            Email address
-            <div className="input-with-icon">
-              <Mail size={16} />
-              <input
-                type="email"
-                autoComplete="email"
-                placeholder="you@example.com"
-                value={email}
-                onChange={e => setEmail(e.target.value)}
+            <label>
+              Password
+              <PasswordInput
+                autoComplete={mode === 'signin' ? 'current-password' : 'new-password'}
+                placeholder={mode === 'signup' ? 'At least 6 characters' : 'Enter your password'}
+                value={password}
+                onChange={e => setPassword(e.target.value)}
                 required
+                minLength={6}
               />
+            </label>
+
+            {error && <div className="form-error" role="alert">{error}</div>}
+
+            <button className="button button-primary button-wide" disabled={busy}>
+              {busy ? (
+                <><Loader2 className="spin" size={16} /> {mode === 'signin' ? 'Signing in…' : 'Creating account…'}</>
+              ) : mode === 'signin' ? (
+                <><Check size={16} /> Sign in & continue</>
+              ) : (
+                <><Check size={16} /> Create account & continue</>
+              )}
+            </button>
+
+            <div className="auth-switch-prompt">
+              {mode === 'signin' ? (
+                <span>
+                  Don't have an account yet?{' '}
+                  <button type="button" onClick={() => { setMode('signup'); setError(''); }}>
+                    Create one now
+                  </button>
+                </span>
+              ) : (
+                <span>
+                  Already have an account?{' '}
+                  <button type="button" onClick={() => { setMode('signin'); setError(''); }}>
+                    Sign in
+                  </button>
+                </span>
+              )}
             </div>
-          </label>
 
-          <label>
-            Password
-            <PasswordInput
-              autoComplete={mode === 'signin' ? 'current-password' : 'new-password'}
-              placeholder={mode === 'signup' ? 'At least 6 characters' : 'Enter your password'}
-              value={password}
-              onChange={e => setPassword(e.target.value)}
-              required
-              minLength={6}
-            />
-          </label>
-
-          {error && <div className="form-error" role="alert">{error}</div>}
-
-          <button className="button button-primary button-wide" disabled={busy}>
-            {busy ? (
-              <><Loader2 className="spin" size={16} /> {mode === 'signin' ? 'Signing in…' : 'Creating account…'}</>
-            ) : mode === 'signin' ? (
-              <><Check size={16} /> Sign in & continue</>
-            ) : (
-              <><Check size={16} /> Create account & continue</>
-            )}
-          </button>
-
-          <div className="auth-switch-prompt">
-            {mode === 'signin' ? (
-              <span>
-                Don't have an account yet?{' '}
-                <button type="button" onClick={() => { setMode('signup'); setError(''); }}>
-                  Create one now
-                </button>
-              </span>
-            ) : (
-              <span>
-                Already have an account?{' '}
-                <button type="button" onClick={() => { setMode('signin'); setError(''); }}>
-                  Sign in
-                </button>
-              </span>
-            )}
-          </div>
-
-          <small className="privacy-note">
-            Your verified email automatically connects you to your study room profile across repeat joins.
-          </small>
-        </form>
+            <small className="privacy-note">
+              Your verified email automatically connects you to your study room profile across repeat joins.
+            </small>
+          </form>
+        )}
       </section>
     </main>
   );
