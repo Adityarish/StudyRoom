@@ -14,6 +14,12 @@ interface GuestProfileInput {
 type IdentifierKind = 'auth' | 'client' | 'email' | 'whatsapp';
 
 export async function resolveGuestProfile(client: PoolClient, input: GuestProfileInput) {
+  // A verified Supabase account is the strongest identity we have. Contact
+  // fields and browser IDs are deliberately not allowed to merge two verified
+  // accounts: phone numbers can be shared and old browser/email identifiers
+  // may predate authentication.
+  if (input.authUserId) return resolveAuthenticatedProfile(client, { ...input, authUserId: input.authUserId });
+
   const contactIdentifiers: Array<{ kind: IdentifierKind; value: string }> = [];
   const hasContactIdentifier = Boolean(input.email || input.whatsappNumber);
   if (input.authUserId) contactIdentifiers.push({ kind: 'auth', value: input.authUserId });
@@ -104,6 +110,66 @@ export async function resolveGuestProfile(client: PoolClient, input: GuestProfil
     await client.query(`INSERT INTO guest_profile_identifiers(kind,value,profile_id)
       VALUES($1,$2,$3)
       ON CONFLICT(kind,value) DO UPDATE SET profile_id=EXCLUDED.profile_id,last_seen_at=now()`, [identifier.kind, identifier.value, profileId]);
+  }
+
+  return profileId;
+}
+
+async function resolveAuthenticatedProfile(client: PoolClient, input: GuestProfileInput & { authUserId: string }) {
+  const lockKeys = [`auth:${input.authUserId}`];
+  if (input.email) lockKeys.push(`email:${input.email}`);
+  for (const key of lockKeys.sort()) {
+    await client.query('SELECT pg_advisory_xact_lock(hashtext($1))', [`guest-profile:${key}`]);
+  }
+
+  const accountMatch = await client.query<{ id: string }>(`SELECT id
+    FROM guest_profiles
+    WHERE auth_user_id=$1
+    FOR UPDATE`, [input.authUserId]);
+
+  let profileId = accountMatch.rows[0]?.id;
+  if (!profileId && input.email) {
+    // Claim a pre-authentication profile only when it is still unclaimed. A
+    // matching email identifier attached to another verified account is stale,
+    // not evidence that the accounts are the same person.
+    const legacyMatch = await client.query<{ id: string }>(`SELECT profile.id
+      FROM guest_profiles profile
+      LEFT JOIN guest_profile_identifiers identifier ON identifier.profile_id=profile.id
+        AND identifier.kind='email' AND identifier.value=$1
+      WHERE profile.auth_user_id IS NULL
+        AND (lower(profile.email)=lower($1) OR identifier.value IS NOT NULL)
+      ORDER BY profile.last_joined_at DESC,profile.id
+      LIMIT 1
+      FOR UPDATE OF profile`, [input.email]);
+    profileId = legacyMatch.rows[0]?.id;
+  }
+
+  if (!profileId) {
+    const created = await client.query<{ id: string }>(`INSERT INTO guest_profiles(
+      display_name,avatar_id,presentation,email,whatsapp_number,whatsapp_consent,auth_user_id,last_joined_at
+    ) VALUES($1,$2,$3,$4,$5,$6,$7,now()) RETURNING id`, [
+      input.displayName, input.avatarId, input.presentation ?? null, input.email,
+      input.whatsappNumber, input.whatsappConsent, input.authUserId,
+    ]);
+    profileId = created.rows[0]!.id;
+  } else {
+    await client.query(`UPDATE guest_profiles SET
+      display_name=$2,avatar_id=$3,presentation=$4,email=$5,
+      whatsapp_number=COALESCE($6,whatsapp_number),
+      whatsapp_consent=CASE WHEN $6::text IS NOT NULL THEN $7 ELSE whatsapp_consent END,
+      auth_user_id=$8,updated_at=now(),last_joined_at=now()
+      WHERE id=$1 AND (auth_user_id IS NULL OR auth_user_id=$8)`, [
+      profileId, input.displayName, input.avatarId, input.presentation ?? null,
+      input.email, input.whatsappNumber, input.whatsappConsent, input.authUserId,
+    ]);
+  }
+
+  if (input.email) {
+    // Supabase verifies and uniquely owns this email, so it is safe to repair a
+    // stale legacy mapping in favour of the authenticated account.
+    await client.query(`INSERT INTO guest_profile_identifiers(kind,value,profile_id)
+      VALUES('email',$1,$2)
+      ON CONFLICT(kind,value) DO UPDATE SET profile_id=EXCLUDED.profile_id,last_seen_at=now()`, [input.email, profileId]);
   }
 
   return profileId;
